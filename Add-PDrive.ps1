@@ -4,7 +4,7 @@ Param (
     $computername="localhost"
 )
 
-Connect-VIServer jxfq-vc001.fanatics.corp | Out-Null
+Connect-VIServer my-vcenter.domain.local | Out-Null
 
 foreach($computer in $computername) {
     $vm = $null
