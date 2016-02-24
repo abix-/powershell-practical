@@ -112,7 +112,3 @@ function Get-MrEqlSANUptime {
         }
     }
 }
-
-$cred = Get-Credential -Message "grpadmin credentials" -UserName grpadmin
-$arrays = @("10.143.112.16", "10.143.32.33", "10.143.48.87", "10.143.72.30", "10.143.40.100", "10.143.64.50", "10.143.128.39", "10.143.88.16")
-$arrays | Get-MrEqlSANUptime -Credential $cred | select MemberName,IP,Firmware,BootTime,"Uptime(Days)" | ft
