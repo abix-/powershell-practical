@@ -9,7 +9,7 @@ The 53 functions in Aluminium allow me to increase efficiency and minimize munda
 * **Optimize-ClusterBalance**: Supports Round Robin and Quick balancing. Round Robin balances VMs across a cluster by splitting into unique types, then Round Robining evenly across all hosts. Quick makes the minimum required vMotions to balance a cluster based on allocated VM Host memory.
 * **New-VMHost**: work in progress to accelerate ESXi VM Host build times. Modifies ILO users, creates custom ESXi ISO, performs install post-configuration.
 * **Get-VMDatastoreDetails**: creates detailed report for all VMDKs for a list of VMs
-* **Move-VMtovCenter**: migrates a VM between vCenters by unregistering a VM from a Source vCenter, registering it on a destination vCenter, updateing the NIC network labels, and powering on the VM. Tested between vCenter 5.1U3 and vCenter and 6.0U1
+* **Move-VMtovCenter**: migrates a VM between vCenters by unregistering a VM from a Source vCenter, registering it on a destination vCenter, updating the NIC network labels, and powering on the VM. Tested between vCenter 5.1U3 and vCenter and 6.0U1
 
 My intention is for this respository to be a reference for the next guy who comes along. If you did not get here by searching GitHub for a PowerShell cmdlet, I recommend doing this and then checking the Code results. Uncommented code examples are much better than no code examples.
 
