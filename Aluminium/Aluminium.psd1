@@ -12,7 +12,7 @@
 RootModule = 'Aluminium.psm1'
 
 # Version number of this module.
-ModuleVersion = '0.2.0'
+ModuleVersion = '0.21.0'
 
 # ID used to uniquely identify this module
 GUID = '9c82a3fb-9732-44e6-aec0-6c323594f505'

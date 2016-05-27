@@ -11,12 +11,18 @@ function Export-Results {
     param (
         $results,
         $exportPath = (Get-Location).Path,
-        $exportName = "results"
+        $exportName = "results",
+        [switch]$appendTimestamp = $true
     )
 
-    if($exportPath -match "[aA-zZ]:\\$") {
-        $exportPath += "Reports\$($exportName)_$(Get-Date -Format yyyyMMdd_HHmmss).csv"
-    } else { $exportPath += "\Reports\$($exportName)_$(Get-Date -Format yyyyMMdd_HHmmss).csv" }
+    if($exportPath -match "[aA-zZ]:\\$") { $exportPath += "Reports\$($exportName)"} 
+    else { $exportPath += "\Reports\$($exportName)" }
+
+    if($appendTimestamp) {
+        $exportPath += "_$(Get-Date -Format yyyyMMdd_HHmmss).csv"
+    } else {
+        $exportPath += ".csv"
+    }
 
     $exportPathParent = Split-Path -Path $exportPath -Parent
     if(!(Test-Path $exportPathParent)) {
