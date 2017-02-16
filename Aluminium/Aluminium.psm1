@@ -70,7 +70,7 @@ function Get-TaskPlus {
       }
 
       process{
-        $tasks | %{
+        $tasks | ForEach-Object{
           if($psV3){
             $object = [ordered]@{}
           }

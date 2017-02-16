@@ -5,6 +5,16 @@
 #
 # Generated on: 2/25/2016
 #
+# Required Modules
+# -HP Scripting Tools: used by Get-HPOAInventory
+# -ImportExcel: Import-Excel used
+# -Meadowcroft.SRM: not used
+# -PoshRSJob: used by Start-MigrationMontior runspaces
+# -DRSRule: used by Add-WebSpherePowerOn
+#
+# Todo:
+# -optimize new-vmhost
+# -schedule recurring tasks: datastore inventory, hp oa inventory
 
 @{
 
@@ -12,7 +22,7 @@
 RootModule = 'Aluminium.psm1'
 
 # Version number of this module.
-ModuleVersion = '0.21.0'
+ModuleVersion = '0.29.10'
 
 # ID used to uniquely identify this module
 GUID = '9c82a3fb-9732-44e6-aec0-6c323594f505'
@@ -63,7 +73,7 @@ PowerShellHostVersion = '3.0'
 # FormatsToProcess = @()
 
 # Modules to import as nested modules of the module specified in RootModule/ModuleToProcess
-NestedModules = @("internal.ps1","vmware.ps1","windows-server.ps1","hp.ps1","automation.ps1")
+NestedModules = @("internal.ps1","vmware.ps1","windows-server.ps1","hp.ps1","automation.ps1","vmware-community.ps1","vmware-tests.ps1","vmware-internal.ps1")
 
 # Functions to export from this module
 FunctionsToExport = '*'
@@ -93,4 +103,3 @@ AliasesToExport = '*'
 # DefaultCommandPrefix = ''
 
 }
-

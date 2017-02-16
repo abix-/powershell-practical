@@ -1,4 +1,4 @@
-﻿function Set-DNS {
+function Set-DNS {
     [CmdletBinding(SupportsShouldProcess=$false, ConfirmImpact='Medium')]
     param (
         [Parameter(Position = 1,Mandatory = $true)]
@@ -17,7 +17,7 @@
             if(!$cred) { $nics = Get-WmiObject -Class Win32_NetworkAdapterConfiguration -Filter IPEnabled=TRUE -ComputerName $_s.ComputerName -ErrorAction Stop }
             else { $nics = Get-WmiObject -Class Win32_NetworkAdapterConfiguration -Filter IPEnabled=TRUE -ComputerName $_s.ComputerName -ErrorAction Stop -Credential $usercred }
             if($_s.'NIC Index' -and $_s.'Primary DNS') {
-                $thisnic = $nics | ?{$_.Index -eq $_s.'NIC Index'}
+                $thisnic = $nics | Where-Object{$_.Index -eq $_s.'NIC Index'}
                     if($thisnic) {
                     Write-Host "$($_s.ComputerName) - $($_s.'NIC Index') - Current DNS Servers: $($thisnic.DNSServerSearchOrder)"
                     Write-Host "$($_s.ComputerName) - $($_s.'NIC Index') - Set DNS servers to: $($_s.'Primary DNS') $($_s.'Secondary DNS') $($_s.'Tertiary DNS')"
@@ -55,7 +55,7 @@ function Get-DNS {
     if($servers.EndsWith(".txt")) {
         $output = $servers  -replace "\\","_" -replace "\.txt","" -replace "\.",""
         $outputFile = "$scriptPath\Get-DNS$($output).csv"
-        $servers = gc $servers
+        $servers = Get-Content $servers
     } else { $outputFile = "$scriptPath\$servers.csv" }
     foreach($_s in $servers) {
         $i++
@@ -98,19 +98,34 @@ function Get-DNS {
     Write-Host "Results have been written to '$outputFile'"
 }
 
+#cmdletbinding, if, foreach, hash table, data types, splatting, wmi, utility function, calculated properties
 function Get-Uptime {
     [cmdletbinding()]
     Param (
-        $servers,
-        $cred
+        [string]$servers,
+        [string]$username
     )
 
-    if($servers.EndsWith(".txt")) { $servers = gc $servers }
-    if(!$cred) { $scred = Get-Credential } 
-    else { $scred = $cred }
+    #If $servers is a text file, read the content
+    if($servers.EndsWith(".txt")) { $servers = Get-Content $servers }
 
+    #Set the WMI class
+    $wmi_parms = @{
+        Class="win32_operatingsystem"
+    }
+
+    #Get user credentials from SecureString if available
+    if($username) {
+        $credential = Get-SecureStringCredentials -Username $username -Credentials
+        if(!$credential) {
+            $credential = Get-Credential -Message $username
+        }
+        $wmi_parms.Add("Credential",$credential)
+    }
+
+    #Loop through servers and get uptime. Use calculate properties to convert LastBootUptime
     foreach($_s in $servers) {
-        Get-WmiObject -ComputerName $_s -ClassName win32_operatingsystem -Credential $scred |  select csname, @{LABEL='LastBootUpTime';EXPRESSION={$_.ConverttoDateTime($_.lastbootuptime)}}
+        Get-WmiObject -ComputerName $_s @wmi_parms |  Select-Object CSName, @{Name='LastBootUpTime';Expression={$_.ConverttoDateTime($_.LastBootupTime)}}
     }
 }
 
@@ -149,7 +164,7 @@ function Get-Firmware {
         return 
     }
 
-    if($vmhost.EndsWith(".txt")) { $vmhost = gc $vmhost }
+    if($vmhost.EndsWith(".txt")) { $vmhost = Get-Content $vmhost }
 
     $allobj = @()
     foreach($v in $vmhost) {
@@ -167,7 +182,7 @@ function Get-Firmware {
         writeToObj $v $nic.driverinfo.firmwareversion $nic.driverinfo.version
     }
 
-    $allobj | select Host, Firmware, Driver
+    $allobj | Select-Object Host, Firmware, Driver
 }
 
 function Wait-Service {
@@ -180,7 +195,7 @@ function Wait-Service {
     do {
         Write-Host "[$ServiceName] Waiting for service to enter Running state"
         $ServiceObj = Get-WmiObject -Class win32_service -Filter "Name='$ServiceName'"
-        Sleep -Seconds 10
+        Start-Sleep -Seconds 10
     } while (($ServiceObj -eq $null) -or ($ServiceObj.State -ne "Running"))
 
     $ProcessID = $ServiceObj.ProcessID
@@ -188,7 +203,23 @@ function Wait-Service {
         $ProcessObj = Get-WmiObject -Class win32_process -Filter "ProcessID='$ProcessID'"
         $ServiceCreationDate = $ServiceObj.ConvertToDateTime($ProcessObj.CreationDate)
         Write-Host "[$ServiceName] Process at PID $ProcessID was created at [$ServiceCreationDate]"
-        Sleep -Seconds 10
+        Start-Sleep -Seconds 10
     } while ($ServiceCreationDate.AddMinutes($WaitMinutes) -gt (Get-Date))
     Write-Host "[$ServiceName] Started on [$ServiceCreationDate] More than $WaitMinutes minutes have elapsed"
+}
+
+function Get-Uptime {
+    [cmdletbinding()]
+    param (
+        $ComputerName = "localhost"
+    )
+
+    $cred = Get-SecureStringCredentials -Username $global:AdminUsername
+    $wmi = Get-WmiObject -class win32_OperatingSystem -ComputerName $ComputerName -Credential $cred
+    $lastboot = $wmi.ConvertToDateTime($wmi.LastBootUpTime)
+    $uptime = (Get-Date)-($lastboot)
+
+    Write-Host "ComputerName: $ComputerName"
+    Write-Host "Last boot: $lastboot"
+    Write-Host "Uptime: $($uptime.Days) days, $($uptime.Hours) hours, $($uptime.Minutes) minutes"
 }

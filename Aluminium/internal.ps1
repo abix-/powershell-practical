@@ -1,4 +1,4 @@
-ï»¿function Set-PowerCLITitle($vcenter) {
+function Set-PowerCLITitle($vcenter) {
     $productName = "PowerCLI"
     $version = Get-PowerCLIVersion
     if($vcenter) { $windowTitle = "[{2}] - $productName {0}.{1}" -f $version.Major, $version.Minor, $vcenter } 
@@ -9,19 +9,23 @@
 function Export-Results {
     [CmdletBinding()]
     param (
-        $results,
-        $exportPath = (Get-Location).Path,
+        [Parameter(ValueFromPipeLine=$True)]$results,
+        $exportPath = $global:ReportsPath,
         $exportName = "results",
-        [switch]$appendTimestamp = $true
+        [switch]$appendTimestamp = $true,
+        [switch]$excel = $false
     )
 
+    if(!(Test-Path $exportPath)) {
+        Write-Host "Path '$exportPath' not found. Defaulting to current location" -ForegroundColor Yellow
+        $exportPath = (Get-Location).Path
+    }
+
     if($exportPath -match "[aA-zZ]:\\$") { $exportPath += "Reports\$($exportName)"} 
-    else { $exportPath += "\Reports\$($exportName)" }
+    else { $exportPath += "\$($exportName)" }
 
     if($appendTimestamp) {
-        $exportPath += "_$(Get-Date -Format yyyyMMdd_HHmmss).csv"
-    } else {
-        $exportPath += ".csv"
+        $exportPath += "_$(Get-Date -Format yyyyMMdd_HHmmss)"
     }
 
     $exportPathParent = Split-Path -Path $exportPath -Parent
@@ -31,8 +35,13 @@ function Export-Results {
     }
 
     if($results.count -gt 0) {
-        #if(!$exportPath) { $exportPath = "$($PSScriptRoot)\Reports\$(($MyInvocation.PSCommandPath.Substring($MyInvocation.PSCommandPath.LastIndexOf("\") + 1)) -replace '.ps1')" + "_$(Get-Date -Format yyyyMMdd_HHmmss).csv" }
-        $results | Export-Csv -NoTypeInformation -Path $exportPath
+        if($excel) {
+            $exportPath += ".xlsx"
+            $results | Export-Excel -TableName $exportName -TableStyle Medium2 -Path $exportPath -AutoSize
+        } else {
+            $exportPath += ".csv"
+            $results | Export-Csv -NoTypeInformation -Path $exportPath
+        }
         Write-Host "Results exported to $exportPath" -ForegroundColor Green
     }
 }
@@ -42,27 +51,38 @@ function Search-Object {
         [Parameter(ValueFromPipeline = $true)]$InputObject = $new,
         [Parameter(ParameterSetName='Property')][string]$Property,
         [Parameter(ParameterSetName='Value')][string]$Value,
-        [int]$Depth = 3
+        [int]$Depth = 1
     )
     if([System.Management.Automation.LanguagePrimitives]::GetEnumerator($InputObject)) { $InputObject = $InputObject[0] }
     $all = GetProperties -Object $InputObject -Depth 0
-    Write-Host "[Depth 0] $($all.count) base properties"
+    Write-Host "[Depth 0] $($all.count) properties"
 
     for($i = 1; $i -le $depth; $i++) {
-        $this = @($all | ?{$_.Depth -eq ($i - 1) -and $_.Properties -ge 1})
+        $this = @($all | Where-Object{$_.Depth -eq ($i - 1) -and $_.Properties -ge 1})
         Write-Host "[Depth $i] $($this.count) properties"
         foreach($_t in $this) {
             $parent = Invoke-Expression "`$InputObject.$($_t.Path)"
-            if($i -gt 1) { $conflict = @($all | ?{$_.Value -eq $_t.Value -and $_.Type -eq $_t.Type}) }
-            if($conflict.count -lt 3) {
-                    $all += GetProperties -Object $parent -Path ($_t.Path) -Depth $i
+            #Write-Debug "here"
+            Write-Host "[$($_t.Path)] $($_t.type)"
+            if($_t.Type -eq "VMware.VimAutomation.ViCore.Types.V1.Inventory.VMHost") { Write-Debug "here" }
+            $conflict = @($all | Where-Object{$_.Value -eq $_t.Value -and $_.Type -eq $_t.Type})
+            if($conflict.count -lt 2) {
+                    $newprops = GetProperties -Object $parent -Path ($_t.Path) -Depth $i
+                    Write-Debug "hi"
+                    foreach($_n in $newprops) {
+                        $conflict = @($all | Where-Object{$_.Value -eq $_n.Value -and $_.Type -eq $_n.Type})
+                        if($conflict.Count -lt 2) {
+                            $all += $_n
+                        } else { Write-Host "Skipping sub $($_n.Name)" }
+                    }
+
             } else { Write-Host "Skipping $($_t.Name)" }
         }
     }
 
     switch($PSCmdlet.ParameterSetName) {
-        "Property" { $all | ?{ $_.name -like "*$Property*" } | select Path,Value,Type }
-        "Value" { $all | ?{ $_.Value -like "*$Value*" } | select Path,Value,Type }
+        "Property" { $all | Where-Object{ $_.name -like "*$Property*" } | Select-Object Path,Value,Type }
+        "Value" { $all | Where-Object{ $_.Value -like "*$Value*" } | Select-Object Path,Value,Type }
         default { $all }
     }
 }
@@ -93,26 +113,113 @@ function GetProperties($Object,$Path,$Depth) {
 function Start-Day {
     [cmdletbinding()]
     param ( )
-    #Get unique credentials
-    $vcenters = Import-Csv "$($PSScriptRoot)\vcenters.csv"
-    foreach($_u in ($vcenters.Credentials | select -Unique)) {
-        if($cred = Get-SecureStringCredentials -Username $_u -Credentials) {
-            Write-Host "Loaded $_u credentials from SecureString"
-        } else { $cred = Get-Credential -Message "Enter password" -UserName $_u }
-        $vcenters | ?{$_.Credentials -eq $_u} | %{ Add-Member -InputObject $_ -MemberType NoteProperty -Name Credential -Value $cred -Force }
-    }
-
-    #Connect PowerShell to all vCenters. Launch vSphere client if flagged
-    foreach($_v in $vcenters) {
-        Write-Host "[PowerCLI] Connecting to $($_v.vCenter) as $($_v.Credential.Username)"
-        Connect-VIServer -Credential $_v.Credential -server $_v.VCenter -Protocol https | Out-Null
-        if($_v.StartClient -eq "Yes") {
-            Write-Host "[vSphere Client] Connecting to $($_v.vCenter) as $($_v.Credential.Username)"
-            Start-Process -FilePath "C:\Program Files (x86)\VMware\Infrastructure\Virtual Infrastructure Client\Launcher\VpxClient.exe" -ArgumentList "-s $($_v.vCenter) -u $($_v.Credential.username) -p $($_v.Credential.GetNetworkCredential().Password)"
-        }
-    }
+    Connect-vCenter start-day
 
     #Run Test-vCenters
     Write-Host "Starting checks against connected vCenters"
-    Test-vCenters
+    Test-vCenter
 }
+
+function Set-ClipboardText {
+    Add-Type -AssemblyName PresentationCore
+    [Windows.Clipboard]::GetText() | clip.exe
+}
+
+function Get-IBMInfo {
+    Get-VMHost | Sort-Object Name |Get-View |
+    Select-Object Name, 
+    @{N=“Model“;E={$_.Hardware.SystemInfo.Vendor+ “ “ + $_.Hardware.SystemInfo.Model}},
+    @{N="ProcessorType";E={$_.Hardware.CpuPkg.Description -replace '\s+',' '}},
+    @{N="ProcessorSockets";E={$_.Hardware.CpuInfo.NumCpuPackages}},
+    @{N="ProcessorCores";E={$_.Hardware.CpuInfo.NumCpuCores}} | Export-Csv vmhosts_20160711.csv -NoTypeInformation
+
+    Get-VM | Sort-Object Name | Select-Object Name,@{N="Host";E={$_.VMHost}},@{N="CPU Count";E={$_.NumCPU}} | Export-Csv vms_20160711.csv -NoTypeInformation
+}
+
+function Copy-VMHostFiles {
+    [cmdletbinding()]
+    param (
+        $servers,
+        $source = $Global:VMHostFirmwarePath
+    )
+
+    if($servers.EndsWith(".txt")) { $servers = Get-Content $servers | Sort-Object }
+
+    $rootpw = Get-SecureStringCredentials -PlainPassword -Username root
+    $sourcefiles = Get-ChildItem $source
+
+    foreach($_s in $servers) {
+        Write-Host "[$_s] Starting SSH and copying files"
+        Get-VMHost $_s | Get-VMHostService | Where-Object {$_.Key -eq "TSM-SSH"} | Start-VMHostService
+        foreach($file in $sourcefiles) {
+            Write-Output y | C:\Scripts\New-VMHost\pscp.exe -scp -pw "$rootpw" "$($file.FullName)" "root@$($_s):/tmp/"
+        }
+        Get-VMHost $_s | Get-VMHostService | Where-Object {$_.Key -eq "TSM-SSH"} | Stop-VMHostService -Confirm:$false
+        Write-Host ""
+    }
+}
+
+function Import-Variables {
+    [cmdletbinding()]
+    param (
+        $settingsFile = "$PSScriptRoot\settings.csv"
+    )
+
+    #If the settings file does not exist
+    if(!(Test-Path $settingsFile)) {
+        #Create a default settings.csv
+
+        $settings = @()
+        Write-Host $settingsFile does not exist. Creating with defaults.
+        $settings += [pscustomobject][ordered]@{
+            Setting = "AdminUsername"
+            Value = "Default"
+        }
+        $settings += [pscustomobject][ordered]@{
+            Setting = "ReportsPath"
+            Value = "\\path\to\file"
+        }
+        $settings += [pscustomobject][ordered]@{
+            Setting = "VMHostFirmwarePath"
+            Value = "\\path\to\file"
+        }
+
+        $settings | Export-Csv $settingsFile -NoTypeInformation
+        Import-Variables
+    } else {
+        #Load the settings and create global variables
+        $settings = Import-Csv $settingsFile
+        foreach($_s in $settings) {
+            Set-Variable -Name $_s.Setting -Value $_s.Value -Scope Global
+        }
+    }
+}
+
+function Set-AdminUsername {
+    [cmdletbinding()]
+    param (
+        $settingsFile = "$PSScriptRoot\settings.csv"
+    )
+
+    $newAdminUserName = Read-Host "Username for Administrator actions?"
+
+    #Load the settings
+    $settings = Import-Csv $settingsFile
+   
+    #Remove the old AdminUsername
+    $newsettings = $settings | Where-Object{$_.Setting -ne "AdminUsername"}
+
+    #Add the new AdminUsername
+    $newsettings += [pscustomobject][ordered]@{
+        Setting = "AdminUsername"
+        Value = $newAdminUserName
+    }
+
+    #Export the new settings
+    $newsettings | Export-Csv $settingsFile -NoTypeInformation
+
+    #Import the variables
+    Import-Variables
+}
+
+Import-Variables

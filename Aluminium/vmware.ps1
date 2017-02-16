@@ -1,4 +1,4 @@
-﻿function Set-VMHostAdvancedSetting {
+function Set-VMHostAdvancedSetting {
     <#
     .SYNOPSIS
     (1.0)
@@ -9,7 +9,7 @@
     [cmdletbinding()]
     Param (
         $vmhosts,
-        [Parameter(Mandatory=$true)]$setting,
+        [Parameter(Mandatory=$true)]$Name,
         [Parameter(Mandatory=$true)]$value,
         $confirm = $false
     )
@@ -17,7 +17,7 @@
     foreach($_v in $vmhosts) {
         try { $vm = Get-VMHost $_v -ErrorAction Stop }
         catch { Write-Host "$($_v): VMHost not found" -ForegroundColor Red; continue }
-        $current = Get-AdvancedSetting -Entity $vm -Name $setting
+        $current = Get-AdvancedSetting -Entity $vm -Name $Name
         #if($confirm != $false) {
         Write-Host "$($_v): $($setting) is set to $($current.Value). Set to $($value)?"
         $option = Read-Host
@@ -45,7 +45,7 @@ function Get-DatastoreDetails {
 
     if($Parent) {
         $ParentObj = Get-VIObject -Name $Parent
-        $ParentvCenter = $ParentObj.UID | ?{$_ -match "@(?<vcenter>.*):443"} | %{$matches['vcenter']}
+        $ParentvCenter = $ParentObj.UID | Where-Object{$_ -match "@(?<vcenter>.*):443"} | ForEach-Object{$matches['vcenter']}
         $datastores = @(Get-View -Server $ParentvCenter -ViewType Datastore -SearchRoot $ParentObj.MoRef -Filter @{"Name"="$Name"})
         Write-Verbose "[$Name] Found $($datastores.count) datastores in $ParentvCenter\$Parent"
     } else {
@@ -56,7 +56,7 @@ function Get-DatastoreDetails {
     foreach($_d in ($datastores | Select-Object -ExpandProperty Summary)) {
         Write-Verbose "[$($_d.Name)] Processing datastore"
         $capgb = (($_d.Capacity)/1GB)
-        $provgb = (($_d.Capacity – $_d.FreeSpace + $_d.Uncommitted)/1GB)
+        $provgb = (($_d.Capacity � $_d.FreeSpace + $_d.Uncommitted)/1GB)
         Write-Debug "hi"
         $results += [pscustomobject][ordered]@{
             Name = $_d.Name
@@ -68,7 +68,11 @@ function Get-DatastoreDetails {
             "OverProvisionedPercent" = "{0:N2}" -f (($provgb/$capgb)*100)
         }
     }
-    return $results | Sort Name
+    return $results | Sort-Object Name
+}
+
+function Get-vCenterFromUID($uid) {
+    $uid | Where-Object{$_ -match "@(?<vcenter>.*):443"} | ForEach-Object{$matches['vcenter']}
 }
 
 function Get-VIObject {
@@ -119,13 +123,19 @@ function Get-VMHostMetrics {
     .EXAMPLE
     .\Get-VMHostMetrics -cluster
     #>
-    [cmdletbinding()]
+    [cmdletbinding(DefaultParameterSetName="Name")]
     Param (
-        [Parameter(ParameterSetName="Name")]$Name,
-        [Parameter(ParameterSetName="Parent")]$Parent,
+        [Parameter(ParameterSetName="Name",Position=0)]$Name = "",
+        [Parameter(ParameterSetName="Parent",Position=1)]$Parent,
         [switch]$report = $true,
         [string]$reportName = "VMHostMetrics_"
     )
+
+    if($global:defaultviservers) {
+        if($global:defaultviservers.count -eq 1) {
+            $vCenter = $global:defaultviservers[0].name
+        } else { $vCenter = "multiple"  }
+    }
 
     #Switch the Parameter Set and collect the appropriate VMware object(s)
     $all = @()
@@ -133,26 +143,25 @@ function Get-VMHostMetrics {
         switch($PSCmdlet.ParameterSetName) {
             "Parent" {
                 $ParentObj = Get-VIObject -Name $Parent
-                $ParentvCenter = $ParentObj.UID | ?{$_ -match "@(?<vcenter>.*):443"} | %{$matches['vcenter']}
-                $VMHostViews = @(Get-View -Server $ParentvCenter -ViewType HostSystem -SearchRoot $ParentObj.ExtensionData.MoRef -Property Name)
-                Write-Host "[$Parent] Found $($VMHostViews.count) VMHosts Views in $ParentvCenter\$Parent"
-                $reportName += $Parent
+                $vCenter = $ParentObj.UID | Where-Object{$_ -match "@(?<vcenter>.*):443"} | ForEach-Object{$matches['vcenter']}
+                $VMHostViews = @(Get-View -Server $vCenter -ViewType HostSystem -SearchRoot $ParentObj.ExtensionData.MoRef -Property Name)
+                Write-Host "[$vCenter] Found $($VMHostViews.count) VMHosts in $Parent"
             }
             "Name" {
                 $VMHostViews = @(Get-View -ViewType HostSystem -Filter @{"Name"="$Name"} -Property Name)
-                Write-Host "[$Name] Found $($VMHostViews.count) VMHosts"
-                $reportName += $Name
+                Write-Host "[$vCenter] Found $($VMHostViews.count) VMHosts matching '$Name'"
             }
         }
 
         if($VMHostViews.Count -eq 0) {
             Write-Host "No VMHosts found. Aborting."
             Return    
-        } else {
-            $vmhosts = $VMHostViews | Sort Name | Get-VIObjectByVIView
-        }
+        } else { $vmhosts = $VMHostViews | Sort-Object Name | Get-VIObjectByVIView }
     }
-    catch { Write-Host -ForegroundColor Red $_.Exception.Message; Return }
+    catch { 
+        Write-Host -ForegroundColor Red $_.Exception.Message; 
+        Return 
+    }
 
     #Determine configuration metrics
     foreach($_vmhost in $vmhosts) {
@@ -169,11 +178,11 @@ function Get-VMHostMetrics {
         #Create an ordered PS Custom Object and store the metrics
         $all += [pscustomobject][ordered]@{
             VMHost = [string]$_vmhost.name
-            vCenter = $_vmhost.uid | ?{$_ -match "@(?<vcenter>.*):443"} | %{$matches['vcenter']}
+            vCenter = $_vmhost.uid | Where-Object{$_ -match "@(?<vcenter>.*):443"} | ForEach-Object{$matches['vcenter']}
             Cluster = [string]$_vmhost.Parent
             Model = [string]$_vmhost.Model
             Build = [int]$view.Config.Product.Build
-            IPAddress = ($_vmhost | Get-VMHostNetworkAdapter) | ?{$_.ManagementTrafficEnabled} | Select-Object -ExpandProperty IP
+            IPAddress = ($_vmhost | Get-VMHostNetworkAdapter) | Where-Object{$_.ManagementTrafficEnabled} | Select-Object -ExpandProperty IP
             VMs = [int]$vms.count
             #MaxCPU_24hour = "{0:N2}" -f ($_vmhost | Get-Stat -Stat cpu.usage.average -MaxSamples 12 -IntervalSecs 7200 | Measure-Object -Maximum -Property Value).Maximum
             #AvgCPU_24hour = "{0:N2}" -f ($_vmhost | Get-Stat -Stat cpu.usage.average -MaxSamples 12 -IntervalSecs 7200 | Measure-Object -Average -Property Value).Average
@@ -189,72 +198,10 @@ function Get-VMHostMetrics {
     }
 
     #Show results and export report
-    $all | sort VMHost
+    $all | Sort-Object VMHost
     if($report -eq $true -and $all.count -gt 0) {
-        Export-Results -results $all -exportName $reportName
-    }
-}
-
-function Connect-AllvCenters {
-    <#
-    .SYNOPSIS
-    (1.0)
-    Prompt for user credentials and connect PowerShell to multiple vCenters
-    .DESCRIPTION
-    Edit vcenters.csv and edit the list of vCenters and associated username
-    #>
-    [cmdletbinding()]
-    param ()
-    $connectioneeded = @()
-    #Read vCenter/Credentials from file
-    $vcenters = Import-Csv "$($PSScriptRoot)\vcenters.csv"
-    #Filter out connected vcenters
-    foreach($_v in $vcenters) {
-        if($Global:DefaultVIServers.Name -notcontains $_v.vCenter) {
-            Write-Host "$($_v.vCenter): Connect-VIServer needed"; $connectioneeded += $_v
-        } else { Write-Host "$($_v.vCenter): Already connected" }
-    }
-    #Determine unique usernames and connect to vCenters
-    $users = $connectioneeded.Credentials | select -Unique
-    foreach($_u in $users) {
-        if($cred = Get-SecureStringCredentials -Username $_u -Credentials) {
-        Write-Host "Loaded $_u from SecureString"
-        } else { $cred = Get-Credential -Message "Enter password" -UserName $_u }
-        foreach($_v in ($connectioneeded | ?{$_.Credentials -eq $_u})) { Connect-VIServer -Credential $cred -server $_v.VCenter -Protocol https }
-    }
-    Write-Host ""
-}
-
-function Get-FreeScsiLun {
-    <#  
-    .SYNOPSIS  Find free SCSI LUNs  
-    .DESCRIPTION The function will find the free SCSI LUNs
-      on an ESXi server
-    .NOTES  Author:  Luc Dekens  
-    .PARAMETER VMHost
-        The VMHost where to look for the free SCSI LUNs  
-    .EXAMPLE
-       PS> Get-FreeScsiLun -VMHost $esx
-    .EXAMPLE
-       PS> Get-VMHost | Get-FreeScsiLun
-    #>
-    [cmdletbinding()]
-    #Requires -Version 3.0
-    param (
-        [parameter(ValueFromPipeline = $true,Position=1)][ValidateNotNullOrEmpty()]
-        [VMware.VimAutomation.Client20.VMHostImpl]$VMHost
-    )
-
-    process{
-        $storMgr = Get-View $VMHost.ExtensionData.ConfigManager.DatastoreSystem
-        $storMgr.QueryAvailableDisksForVmfs($null) | %{
-            New-Object PSObject -Property @{
-                VMHost = $VMHost.Name
-                CanonicalName = $_.CanonicalName
-                Uuid = $_.Uuid
-                CapacityGB = [Math]::Round($_.Capacity.Block * $_.Capacity.BlockSize / 1GB,2)
-            }
-        }
+        $reportName += $vCenter
+        Export-Results -results $all -exportName $reportName 
     }
 }
 
@@ -266,9 +213,9 @@ function Get-VMDiskMap {
 	process {
 		if ($VM) {
 			$VmView = Get-View -ViewType VirtualMachine -Filter @{"Name" = $VM}	   
-			foreach ($VirtualSCSIController in ($VMView.Config.Hardware.Device | where {$_.DeviceInfo.Label -match "SCSI Controller"})) {
-				foreach ($VirtualDiskDevice in ($VMView.Config.Hardware.Device | where {$_.ControllerKey -eq $VirtualSCSIController.Key})) {
-					$VirtualDisk = "" | Select VM,SCSIController, DiskName, SCSI_Id, DiskFile,  DiskSize, WindowsDisks
+			foreach ($VirtualSCSIController in ($VMView.Config.Hardware.Device | Where-Object {$_.DeviceInfo.Label -match "SCSI Controller"})) {
+				foreach ($VirtualDiskDevice in ($VMView.Config.Hardware.Device | Where-Object {$_.ControllerKey -eq $VirtualSCSIController.Key})) {
+					$VirtualDisk = "" | Select-Object VM,SCSIController, DiskName, SCSI_Id, DiskFile,  DiskSize, WindowsDisks
 					$VirtualDisk.VM = $VM
 					$VirtualDisk.SCSIController = $VirtualSCSIController.DeviceInfo.Label
 					$VirtualDisk.DiskName = $VirtualDiskDevice.DeviceInfo.Label
@@ -278,12 +225,12 @@ function Get-VMDiskMap {
 
 					$LogicalDisks = @()
 					# Look up path for this disk using WMI.
-					$thisVirtualDisk = get-wmiobject -class "Win32_DiskDrive" -namespace "root\CIMV2" -computername $VM | where {$_.SCSIBus -eq $VirtualSCSIController.BusNumber -and $_.SCSITargetID -eq $VirtualDiskDevice.UnitNumber}
+					$thisVirtualDisk = get-wmiobject -class "Win32_DiskDrive" -namespace "root\CIMV2" -computername $VM | Where-Object {$_.SCSIBus -eq $VirtualSCSIController.BusNumber -and $_.SCSITargetID -eq $VirtualDiskDevice.UnitNumber}
 					# Look up partition using WMI.
-					$Disk2Part = Get-WmiObject Win32_DiskDriveToDiskPartition -computername $VM | Where {$_.Antecedent -eq $thisVirtualDisk.__Path}
+					$Disk2Part = Get-WmiObject Win32_DiskDriveToDiskPartition -computername $VM | Where-Object {$_.Antecedent -eq $thisVirtualDisk.__Path}
 					foreach ($thisPartition in $Disk2Part) {
 						#Look up logical drives for that partition using WMI.
-						$Part2Log = Get-WmiObject -Class Win32_LogicalDiskToPartition -computername $VM | Where {$_.Antecedent -eq $thisPartition.Dependent}
+						$Part2Log = Get-WmiObject -Class Win32_LogicalDiskToPartition -computername $VM | Where-Object {$_.Antecedent -eq $thisPartition.Dependent}
 						foreach ($thisLogical in $Part2Log) {
 							if ($thisLogical.Dependent -match "[A-Z]:") {
 								$LogicalDisks += $matches[0]
@@ -301,7 +248,7 @@ function Get-VMDiskMap {
 	}
 }
 
-function Connect-vCenters {
+function Connect-vCenter {
     <#
     .SYNOPSIS
     Menu for connecting PowerShell and the vSphere Client to vCenter
@@ -309,92 +256,107 @@ function Connect-vCenters {
     Edit vcenters.csv and edit the list of vCenters and associated username
     #>
     [cmdletbinding()]
-    param ([switch]$client)
+    param (
+        [Parameter(Position=0)][string]$vCenter,
+        [switch]$all,
+        [switch]$client,
+        [switch]$StartDay
+    )
 
-    #Read vcenters.csv and draw menu
+    #Import vcenters.csv
     $vcenters = Import-Csv "$($PSScriptRoot)\vcenters.csv"
-    Write-Host "Select a server from the list"
-    for($i = 1; $i -lt $vcenters.count + 1; $i++) { Write-Host "[$i] $($vcenters[$i-1].vCenter)" }
+
+    #Draw menu if needed
+    if(!$vCenter) {
+        Write-Host "Select a server from the list"
+        for($i = 1; $i -lt $vcenters.count + 1; $i++) { Write-Host "[$i] $($vcenters[$i-1].vCenter)" }
+        $option = Read-Host "#, all, start-day"
+    } else {
+        $option = $vCenter
+    }
 
     #Switch $option to determine selected vCenter
-    $option = Read-Host
     switch -Regex ($option) {
-        "\d" {
+        "\d{1},\d{1}" { #Connect to multiple vCenters by number
+            Write-Host "Disconnecting from all connected vCenters"
+            if($global:DefaultVIServers) { Disconnect-VIServer -Server $global:DefaultVIServers -Force -ErrorAction SilentlyContinue -Confirm:$false }
+
+            $options = $option.Split(",")
+            foreach($_o in $options) {
+                $destvCenter = $vcenters[$_o-1]
+                $cred = Get-SecureStringCredentials -Username $destvCenter.Credentials -Credentials
+                ConnectClients -vCenter $destvCenter.vCenter -Credential $cred -Client:$client
+            }
+            Set-PowerCLITitle "Multiple vCenters"
+            break
+        }
+        "\A\d{1}" { #Connect to one vCenter by number
+            Write-Host "Disconnecting from all connected vCenters"
+            if($global:DefaultVIServers) { Disconnect-VIServer -Server $global:DefaultVIServers -Force -ErrorAction SilentlyContinue -Confirm:$false }
+
             #Assign variable to selected vCenter and get user credentials
             $destvCenter = $vcenters[$option-1]
-            if($cred = Get-SecureStringCredentials -Username $destvCenter.Credentials -Credentials) {
-                Write-Host "Loaded $($destvCenter.Credentials) from SecureString"
-            } else { $cred = Get-Credential -UserName $destvCenter.Credentials -Message $destvCenter.vCenter }
-
-            #if -client switch is used, launch vSphere client and connect with credentials
-            if($client) { Start-Process -FilePath "C:\Program Files (x86)\VMware\Infrastructure\Virtual Infrastructure Client\Launcher\VpxClient.exe" -ArgumentList "-s $($destvCenter.vCenter) -u $($cred.username) -p $($cred.GetNetworkCredential().Password)" }
-            
-            #Disconnect from all vCenters and connect to selected vCenter
-            Write-Host "Connecting to $($destvCenter.vCenter)"
-            if($global:DefaultVIServers) { Disconnect-VIServer -Server $global:DefaultVIServers -Force -ErrorAction SilentlyContinue -Confirm:$false }
-            Connect-VIServer -Credential $cred -server $destvCenter.vCenter -Protocol https
+            $cred = Get-SecureStringCredentials -Username $destvCenter.Credentials -Credentials
+            ConnectClients -vCenter $destvCenter.vCenter -Credential $cred -Client:$client
             Set-PowerCLITitle $destvCenter.vCenter
+            break
+        }
+        "all" { #Connect to all vCenters
+            $connectioneeded = @()
+            foreach($_v in $vcenters) {
+                if($Global:DefaultVIServers.Name -notcontains $_v.vCenter) {
+                    Write-Host "[$($_v.vCenter)] Connect-VIServer needed" ; $connectioneeded += $_v
+                } else { Write-Host "$($_v.vCenter): Already connected" }
+            }
+            #Determine unique usernames and connect to vCenters
+            foreach($_u in ($connectioneeded.Credentials | Select-Object -Unique)) {
+                $cred = Get-SecureStringCredentials -Username $_u -Credentials
+                foreach($_v in ($connectioneeded | Where-Object{$_.Credentials -eq $_u})) {
+                    ConnectClients -vCenter $_v.vCenter -Credential $cred -Client:$client
+                }
+            }
+            Set-PowerCLITitle "All vCenters"
+            break
+        }
+        "start-day" { #Launch Clients based on settings in vcenters.csv
+            #Get unique credentials
+            foreach($_u in ($vcenters.Credentials | Select-Object -Unique)) {
+                $cred = Get-SecureStringCredentials -Username $_u -Credentials
+                $vcenters | Where-Object{$_.Credentials -eq $_u} | ForEach-Object{ Add-Member -InputObject $_ -MemberType NoteProperty -Name Credential -Value $cred -Force }
+            }
+
+            #Connect PowerShell to all vCenters. Launch vSphere client if flagged
+            foreach($_v in $vcenters) {
+                if($_v."Start-Day" -eq "Yes") {
+                    [switch]$client = $true
+                } else {
+                    [switch]$client = $false
+                }
+                ConnectClients -vCenter $_v.vCenter -Credential $_v.credential -Client:$client
+            }
+            Set-PowerCLITitle "All vCenters"
+            break
         }
         default { Write-Host "$option - Invalid Option" }
     }
 }
 
-function Test-ESXiAccount {
-    <#
-    .SYNOPSIS
-    Test local ESXi accounts on VM hosts
-    .DESCRIPTION
-    Attempts to connect directly to multiple VM Hosts using specified credentials
-    #>
+function ConnectClients {
     [cmdletbinding()]
-    Param (
-        [string]$vmhostPath = "$($PSScriptRoot)\VMHosts_All_20160211.csv",
-        [string]$account = "vadmin",
-        [string]$vcenter,
-        [string]$reportPath = "$($PSScriptRoot)\Reports\Test-ESXiAccount_"
+    param (
+        [string]$vCenter,
+        $Credential,
+        [switch]$Client
     )
-
-    try { 
-        $hosts = Import-Csv $vmhostPath -ErrorAction Stop
-        Write-Host "$($vmhostPath): Loaded $($hosts.count) hosts"
-        if($vcenter) { 
-            $hosts = $hosts | ?{$_.vCenter -like $vcenter}
-            Write-Host "$($vmhostPath): Filtered to $($hosts.count) hosts on $($vcenter)"
-        }
+    #if -client switch is used, launch vSphere client and connect with credentials
+    if($client) {
+        Write-Host "[$vCenter] Launching vSphere Client as $($Credential.Username) "
+        Start-Process -FilePath "C:\Program Files (x86)\VMware\Infrastructure\Virtual Infrastructure Client\Launcher\VpxClient.exe" -ArgumentList "-s $vCenter -u $($Credential.username) -p $($Credential.GetNetworkCredential().Password)" 
     }
-    catch { Write-Host "$($vmhostPath): Failed to load CSV. Aborting."; Exit-PSSession }
-    $account_pw_secure = Read-Host "Password for $account" -AsSecureString
-    $account_pw = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($account_pw_secure))
-    Write-Host ""
-
-    $results = @()
-    foreach($_h in $hosts) {
-        try {
-            Connect-VIServer $_h.VMHost -User $account -Password $account_pw -ErrorAction Stop -WarningAction SilentlyContinue | Out-Null
-            $status = "Validated"
-            Write-Host "$($_h.VMHost): Validated password for $account"
-            Disconnect-VIServer $_h.VMHost -Force -Confirm:$false
-        }
-
-        catch {
-            Write-Host "$($_h.VMHost): Failed to connect as $account"
-            $status = "Failed"
-        }
-
-        $results += [pscustomobject][ordered]@{
-            Host = $_h.VMHost
-            vCenter = $_h.vCenter
-            Account = $account
-            Status = $status
-        }
-    }
-
-    if($results.count -gt 0) {
-        if($vcenter) { $reportPath += "$($vcenter)_" }
-        $reportPath += "$($account)_$(Get-Date -Format yyyyMMdd_HHmmss).csv"
-        $results | Export-Csv -NoTypeInformation -Path $reportPath
-        Write-Host "Results exported to $reportPath" -ForegroundColor Green
-    }
+            
+    #Connect to selected vCenter
+    Write-Host "[$vCenter] Connecting PowerCLI as $($Credential.Username)"
+    Connect-VIServer -Credential $Credential -server $vCenter -Protocol https
 }
 
 function Start-MultipleVM {
@@ -416,8 +378,8 @@ function Start-MultipleVM {
     }
 
     #Assign variables and show VM list
-    $poweredoff = $($vms | ?{$_.PowerState -eq "PoweredOff"})
-    $poweredon = $($vms | ?{$_.PowerState -eq "PoweredOn"})
+    $poweredoff = $($vms | Where-Object{$_.PowerState -eq "PoweredOff"})
+    $poweredon = $($vms | Where-Object{$_.PowerState -eq "PoweredOn"})
     $vms
 
     #Show count of PoweredOff/PoweredOn
@@ -460,8 +422,8 @@ function Stop-MultipleVM {
     }
 
     #Assign variables and show VM list
-    $poweredoff = $($vms | ?{$_.PowerState -eq "PoweredOff"})
-    $poweredon = $($vms | ?{$_.PowerState -eq "PoweredOn"})
+    $poweredoff = $($vms | Where-Object{$_.PowerState -eq "PoweredOff"})
+    $poweredon = $($vms | Where-Object{$_.PowerState -eq "PoweredOn"})
     $vms
 
     #Show count of PoweredOff/PoweredOn
@@ -475,22 +437,13 @@ function Stop-MultipleVM {
             "stop" {
                 foreach($_v in $poweredon) {
                     Write-Host "$($_v.name) - Shutting down"
-                    Shutdown-VMGuest -VM $_v -Confirm:$false
+                    Stop-VMGuest -VM $_v -Confirm:$false
                     Start-Sleep $seconds
                 }
             }
             default { Write-Host "Exiting"; Return }
         }
     }
-}
-
-function SetException($h) {
-    try { $ex = Get-VMHostFirewallException -VMHost $h -Name $exception -ErrorAction Stop }
-    catch { Write-Host "$h - $exception Exception not found"; return }
-    if($ex.Enabled -ne $enabled) {
-        Write-Host "$h - changing $exception Exception to $enabled"
-        Set-VMHostFirewallException -Exception $ex -Enabled $enabled
-    } else { Write-Host "$h - $exception Exception is already $enabled" }
 }
 
 function Set-ESXiFirewall {
@@ -539,11 +492,11 @@ function Set-ESXiFirewall {
                 $h = Get-VMHost $vmhost -ErrorAction Stop; SetException $h
                 }
             "Cluster" { 
-                $c = Get-Cluster $cluster -ErrorAction Stop | Get-VMHost | sort Name
+                $c = Get-Cluster $cluster -ErrorAction Stop | Get-VMHost | Sort-Object Name
                 foreach($_c in $c) { SetException $_c } 
                 }
             "Datacenter" { 
-                $c = Get-Datacenter $datacenter -ErrorAction Stop | Get-VMHost | sort Name
+                $c = Get-Datacenter $datacenter -ErrorAction Stop | Get-VMHost | Sort-Object Name
                 foreach($_c in $c) { SetException $_c }
             }
         }
@@ -556,7 +509,7 @@ function Get-VMHosts {
         switch($PSCmdlet.ParameterSetName) {
             "Parent" {
                 $ParentObj = Get-VIObject -Name $Parent
-                $ParentvCenter = $ParentObj.UID | ?{$_ -match "@(?<vcenter>.*):443"} | %{$matches['vcenter']}
+                $ParentvCenter = $ParentObj.UID | Where-Object{$_ -match "@(?<vcenter>.*):443"} | ForEach-Object{$matches['vcenter']}
                 $VMHostViews = @(Get-View -Server $ParentvCenter -ViewType HostSystem -SearchRoot $ParentObj.ExtensionData.MoRef -Property Name)
                 Write-Host "[$Parent] Found $($VMHostViews.count) VMHosts Views in $ParentvCenter\$Parent"
                 $reportName += $Parent
@@ -572,7 +525,7 @@ function Get-VMHosts {
             Write-Host "No VMHosts found. Aborting."
             Return    
         } else {
-            $vmhosts = $VMHostViews | Sort Name | Get-VIObjectByVIView
+            $vmhosts = $VMHostViews | Sort-Object Name | Get-VIObjectByVIView
         }
     }
     catch { Write-Host -ForegroundColor Red $_.Exception.Message; Return }
@@ -593,8 +546,7 @@ function Get-VMDetails {
     [cmdletbinding()]
     Param (
         [Parameter(Mandatory=$true,Position=0)]$Name,
-        [switch]$export = $false,
-        [string]$exportName = "$($PSScriptRoot)\Reports\VMDetails"
+        [switch]$export = $false
     )
     if($Name.EndsWith(".txt")) { $Name = @(Get-Content $Name) | Select-Object -Unique } 
     try { $allvms = Get-VM -ErrorAction Stop }
@@ -603,7 +555,7 @@ function Get-VMDetails {
     $results = @()
     foreach($_s in $Name) {
         Write-Host "$($_s): Collecting metrics"
-        $vms = @($allvms | ?{$_.name -eq "$_s"})
+        $vms = @($allvms | Where-Object{$_.name -eq "$_s"})
         if($vms.count -eq 0) { Write-Host "$($_s): VM not found. Skipping." -ForegroundColor Red; Continue } 
         elseif($vms.count -gt 1) { Write-Warning "$($_s): Found $($vms.count) matching VMs" }
         foreach($vm in $vms) {
@@ -612,7 +564,7 @@ function Get-VMDetails {
             
             $adapters = $vm | Get-NetworkAdapter
             if($adapters) {
-                $adapters | %{$i=0} {
+                $adapters | ForEach-Object{$i=0} {
                     Set-Variable -Name NetworkType$i -Value $_.Type
                     Set-Variable -Name NetworkLabel$i -Value $_.NetworkName
                     $i++
@@ -655,8 +607,7 @@ function Get-VMDatastoreDetails {
     [cmdletbinding()]
     Param (
         [Parameter(Mandatory=$true,Position=0)]$servers,
-        [switch]$export = $false,
-        [string]$exportName = "$($PSScriptRoot)\Reports\VMDatastoreDetails"
+        [switch]$export = $false
     )
     if($servers.EndsWith(".txt")) { $servers = @(Get-Content $servers) }
     try { $allvms = Get-VM -ErrorAction Stop }
@@ -665,7 +616,7 @@ function Get-VMDatastoreDetails {
     $all = @()
     foreach ($_s in $servers){
         Write-Host "$($_s): Collecting data"
-        $vms = @($allvms | ?{$_.name -eq "$_s"})
+        $vms = @($allvms | Where-Object{$_.name -eq "$_s"})
         if($vms.count -eq 0) { Write-Host "$($_s): VM not found. Skipping." -ForegroundColor Red; Continue } 
         elseif($vms.count -gt 1) { Write-Warning "$($_s): Found $($vms.count) matching VMs" }
 
@@ -695,144 +646,9 @@ function Get-VMDatastoreDetails {
             }
         }
     }
-    $all = $all | sort Name
+    $all = $all | Sort-Object Name
     if($export) { Export-Results -Results $all -ExportName Get-VMDatastoreDetails }
     else { Write-Output $all }
-}
-
-function Test-vCenters {
-    Connect-AllvCenters
-
-    $hosts = Get-VMHost | Sort-Object Name
-    $hostsView = Get-View -ViewType HostSystem -Property Name,RunTime
-    Write-Host "`nTotal hosts: $($hosts.count)"
-    Write-host ""
-
-    $nonconnected= @($hosts | ?{$_.ConnectionState -ne "Connected"})
-    Write-Host "Hosts not in Connected state: $($nonconnected.Count)"
-    if($nonconnected.Count -gt 0) { $nonconnected | Select-Object -ExpandProperty Name }
-    Write-Host ""
-
-    $lowuptime = @($hostsView | Select Name,@{N="UptimeHours"; E={[math]::abs((new-timespan (Get-Date) $_.Runtime.BootTime).TotalHours)}} | ?{$_.UptimeHours -le 120})
-    Write-Host "Hosts with less than 5 days of uptime: $($lowuptime.count)"
-    if($lowuptime.Count -gt 0) { $lowuptime | Select-Object Name,UptimeHours | Sort-Object UptimeHours }
-    Write-Host ""
-
-    $hostservices = @($hosts | Get-VMHostService)
-
-    $sshrunning = @($hostservices | ?{$_.Key -eq "TSM-SSH" -and $_.Running -eq "True"})
-    Write-Host "Hosts with SSH Running: $($sshrunning.Count)"
-    if($sshrunning.count -gt 0) { (($sshrunning | Select-Object -ExpandProperty vmhost) | Select-Object -ExpandProperty name); Write-Host "" }
-
-    $shellrunning = @($hostservices | ?{$_.Key -eq "TSM" -and $_.Running -eq "True"})
-    Write-Host "Hosts with ESXi Shell Running: $($shellrunning.Count)"
-    if($shellrunning.count -gt 0) { (($shellrunning | Select-Object -ExpandProperty vmhost) | Select-Object -ExpandProperty name); Write-Host "" }
-
-    $vmview = Get-View -ViewType VirtualMachine -Property Name, "Runtime" | Sort-Object Name
-    $needconsolidation = @($vmview | ?{$_.Runtime.ConsolidationNeeded})
-    Write-Host "`nTotal VMs: $($vmview.count)`nVMs which need consolidation: $($needconsolidation.count)"
-    if($needconsolidation.count -gt 0) { $needconsolidation | Select-Object -ExpandProperty Name }
-
-    $vms = Get-VM
-    $nonavprxdisks = @($vms | ?{$_.Name -like "*avprx*"} | Get-HardDisk | ?{$_.Filename -notlike "*avprx*"})
-    Write-Host "Non-Avamar Hard Disks attached to Avamar Proxies: $($nonavprxdisks.count)"
-    if($nonavprxdisks.count -gt 0) { $nonavprxdisks | Select-Object Parent,FileName }
-
-    $snaps = @($vms | Get-Snapshot)
-    Write-Host "Snapshots: $($snaps.count)"
-    if($snaps.count -gt 0) { $snaps | select VM,Created,Description,SizeGB }
-}
-
-function checkVM($v) {
-    #Check Floppy existence
-    if($v | Get-FloppyDrive) { $FloppyExists = $true}
-    else { $FloppyExists = $false }
-
-    #Check that only VMXNET3 exists
-    foreach($nic in ($v | Get-NetworkAdapter)) { if($nic.Type -ne "Vmxnet3") { $OnlyVMXStatus = $false } }
-    if($OnlyVMXStatus -eq $null) { $OnlyVMXStatus = $true }
-
-    #Check datastore count, usage
-    $ds_list = @()
-    try {
-        $disks = $v | Get-HardDisk -ErrorAction Stop | ?{$_.filename -notlike "*snap*"}
-        foreach($_d in $disks.Filename) { $ds_list += $_d.Substring(1,$_d.IndexOf("]") - 1) }
-        $ds_list = $ds_list | select -Unique
-        $ds_count = $ds_list.count
-    }
-    catch { Write-Host "$v - Error getting datastore information"; $ds_list = "Error"; $ds_count = "Error" }
-
-    $results = [pscustomobject][ordered]@{
-        Name = $v.Name
-        HardwareVersion = $v.Version
-        FloppyExists = $FloppyExists
-        "Only-VMXNET3" = $OnlyVMXStatus
-        DatastoreCount = $ds_count
-        Datastores = $ds_list
-        ProvisionedGB = ($disks | Measure-Object -Sum -Property CapacityGB).Sum
-    }
-    return $results
-}
-
-function Test-VMStorage {
-    [cmdletbinding(DefaultParametersetName="naaOrDatastore")]
-    Param (
-        [Parameter(ParameterSetName="naaOrdatastore",Mandatory=$true,Position=0)][string]$naaOrdatastore,
-        [Parameter(ParameterSetName="deviceID",Mandatory=$true,Position=0)][string]$deviceID,
-        [string]$datastore_inventory_path = "C:\Scripts\Reports\Datastore_Inventory*",
-        [string]$rdm_inventory_path = "C:\Scripts\Reports\RDM_Inventory*"
-    )
-
-    #point at datastore
-    #check again rdm list - tell if not/is rdm
-    #check against datastore list - tell if not/is rdm
-
-    try {
-        $ds_inventory_csv = Get-ChildItem $datastore_inventory_path -ErrorAction Stop | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-        $ds_inventory = Import-Csv $ds_inventory_csv -ErrorAction Stop
-
-        $rdm_inventory_csv = Get-ChildItem $rdm_inventory_path -ErrorAction Stop | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-        $rdm_inventory = Import-Csv $rdm_inventory_csv  -ErrorAction Stop
-
-        Write-Host "$($ds_inventory_csv): $($ds_inventory.count) datastores"
-        Write-Host "$($rdm_inventory_csv): $($rdm_inventory.count) RDMs"
-        Write-Host ""
-     }
-    catch { Write-Host $_.Exception -ForegroundColor Red ; return }
-
-    switch($PSCmdlet.ParameterSetName) {
-        "naaOrdatastore" {
-            if($naaOrdatastore.StartsWith("naa.")) {
-                $selected = @($ds_inventory | ?{$_."NAA.ID" -like "*$naaOrdatastore*"})
-                if($selected.count -gt 0) { Write-Host "Datstores: Found $($selected.count) matching datstores" }
-
-                $rdm_selected = @($rdm_inventory | ?{$_."ScsiCanonicalName" -like "*$naaOrdatastore*"})
-                if($rdm_selected.count -gt 0) { 
-                    Write-Host "RDMs: Found $($rdm_selected.count) matching RDMs" 
-    
-                }
-            } else {
-                $selected = $ds_inventory | ?{$_.Datastore -like "*$naaOrdatastore*"}
-            }
-        }
-        "deviceID" {
-
-        }
-    }
-
-
-    if($selected) {
-        foreach($_s in $selected) {
-            $vms = @(Get-Datastore -Name $_s.Datastore | Get-VM)
-            if($PSCmdlet.ParameterSetName -eq "deviceID") {
-                Write-Host "DeviceID: $deviceID"
-            }
-            Write-Host "Datastore: $($_s.Datastore)"
-            Write-Host "NAA.ID: $($_s."NAA.ID")"
-            Write-Host "VMs: $($vms.count)"
-            $vms | Sort Name
-        }
-    }
 }
 
 function Get-SyslogSettings {
@@ -846,8 +662,8 @@ function Get-SyslogSettings {
         [string]$datacenter,
         [Parameter(ParameterSetName="vCenter",Mandatory=$true)]
         [switch]$vcenter,
-        [switch]$report = $true,
-        [string]$reportName = "$($PSScriptRoot)\Reports\SyslogSettings_"
+        [switch]$export = $true,
+        [string]$reportName = "SyslogSettings_"
     )
 
     #need to remove .16 from hosts
@@ -863,19 +679,19 @@ function Get-SyslogSettings {
                 }
             "Cluster" { 
                 #Loop through each host in the cluster, collect metrics, append to $all
-                $h = Get-Cluster $cluster -ErrorAction Stop | Get-VMHost | sort Name
+                $h = Get-Cluster $cluster -ErrorAction Stop | Get-VMHost | Sort-Object Name
                 $reportName += $cluster
                 foreach($_h in $h) { Write-Host "$cluster - $_h - Collecting data"; $all += GetSyslogSettings $_h  }     
                 }
             "Datacenter" {
                 #Loop thrugh each host in the datacenter, collect metrics, append to $all
-                $h = Get-Datacenter $datacenter -ErrorAction Stop | Get-VMHost | sort Name
+                $h = Get-Datacenter $datacenter -ErrorAction Stop | Get-VMHost | Sort-Object Name
                 $reportName += $datacenter
                 foreach($_h in $h) { Write-Host "$datacenter - $_h - Collecting data"; $all += GetSyslogSettings $_h  }
             }
             "vCenter" {
                 #Loop all hosts in vCenter, collect metrics, append to $all
-                $h = Get-VMHost -ErrorAction Stop | Sort Name 
+                $h = Get-VMHost -ErrorAction Stop | Sort-Object Name 
                 $reportName += "$($global:DefaultVIServer[0].name)"
                 foreach($_h in $h) { Write-Host "$_h - Collecting data"; $all += GetSyslogSettings $_h }      
             }
@@ -886,31 +702,9 @@ function Get-SyslogSettings {
     $all | Sort-Object VMHost
 
     #Export report
-    if($report -eq $true) {
-        $reportName += "_$(Get-Date -Format yyyyMMdd_HHmmss).csv"
-        $all | Export-csv $reportName -notype
-        Write-Host "Metrics have been written to $reportName"
+    if($export -eq $true) {
+        Export-Results -results $all -exportName $reportName
     }
-}
-
-function GetSyslogSettings($h) {
-    #Create an ordered PS Custom Object and store the metrics
-    $results = [pscustomobject][ordered]@{
-        VMHost = [string]$h.name
-        Cluster = [string]$h.Parent
-        "Syslog.global.logDir" = ($h | Get-AdvancedSetting -Name Syslog.global.logDir).Value
-        "Syslog.global.logHost" = ($h | Get-AdvancedSetting -Name Syslog.global.logHost).Value
-    }
-    return $results
-}
-
-function SetException($h) {
-    try { $ex = Get-VMHostFirewallException -VMHost $h -Name $exception -ErrorAction Stop }
-    catch { Write-Host "$h - $exception Exception not found"; return }
-    if($ex.Enabled -ne $enabled) {
-        Write-Host "$h - changing $exception Exception to $enabled"
-        Set-VMHostFirewallException -Exception $ex -Enabled $enabled
-    } else { Write-Host "$h - $exception Exception is already $enabled" }
 }
 
 function Set-ESXiFirewall {
@@ -959,40 +753,16 @@ function Set-ESXiFirewall {
                 $h = Get-VMHost $vmhost -ErrorAction Stop; SetException $h
                 }
             "Cluster" { 
-                $c = Get-Cluster $cluster -ErrorAction Stop | Get-VMHost | sort Name
+                $c = Get-Cluster $cluster -ErrorAction Stop | Get-VMHost | Sort-Object Name
                 foreach($_c in $c) { SetException $_c } 
                 }
             "Datacenter" { 
-                $c = Get-Datacenter $datacenter -ErrorAction Stop | Get-VMHost | sort Name
+                $c = Get-Datacenter $datacenter -ErrorAction Stop | Get-VMHost | Sort-Object Name
                 foreach($_c in $c) { SetException $_c }
             }
         }
     }
     catch { Write-Host $_.Exception.message -ForegroundColor Red; Return }
-}
-
-function GetHealth($h) {
-    #retrieve NTPD information
-    $ntpservice = Get-VMHostService -VMHost $h | Where-Object {$_.key -eq "ntpd"}
-    $results = [pscustomobject][ordered]@{
-        VMHost = $h.name
-        VMHostTZ = $h.timezone
-        NTPDisRunning = $ntpservice.running
-        NTPDPolicy = $ntpservice.Policy
-    }
-
-    #retrieve NTP Servers configured, report only first 4
-    $ntpserver = @($h | Get-VMHostNtpServer)
-    for ($index = 0; $index -lt 4; $index++) {
-        if ($ntpserver[$index]) { $results | Add-Member -Name "NTPServer$($index)" -Value $ntpserver[$index] -MemberType NoteProperty }
-        else { $results| Add-Member -Name "NTPServer$($index)" -Value "none" -MemberType NoteProperty }
-    }
-
-    #calculate time difference between host and system this script is invoked from
-    $hosttimesystem = get-view $h.ExtensionData.ConfigManager.DateTimeSystem
-    $timedrift = ($hosttimesystem.QueryDateTime() - [DateTime]::UtcNow).TotalSeconds
-    $results | Add-Member -Name "TimeDrift" -Value $timedrift -MemberType NoteProperty
-    return $results
 }
 
 function Get-NTP_Health {
@@ -1012,25 +782,27 @@ function Get-NTP_Health {
     .\Get-NTP_Health.ps1 -Cluster GOLD
 
     #>
-    [cmdletbinding()]
+    [cmdletbinding(DefaultParameterSetName="Name")]
     Param (
-        [Parameter(ParameterSetName="VMHost",Mandatory=$true,Position=0)]
-        [string]$vmhost,
-        [Parameter(ParameterSetName="Cluster",Mandatory=$true)]
-        [string]$cluster,
-        [Parameter(ParameterSetName="Datacenter",Mandatory=$true)]
-        [string]$datacenter,
-        [Parameter(ParameterSetName="vCenter",Mandatory=$true)]
-        [switch]$vcenter,
+        [Parameter(ParameterSetName="Name")]$Name = "",
+        [Parameter(ParameterSetName="Parent")]$Parent,
+        #[Parameter(ParameterSetName="VMHost",Mandatory=$true,Position=0)]
+        #[string]$vmhost,
+        #[Parameter(ParameterSetName="Cluster",Mandatory=$true)]
+        #[string]$cluster,
+        #[Parameter(ParameterSetName="Datacenter",Mandatory=$true)]
+        #[string]$datacenter,
+        #[Parameter(ParameterSetName="vCenter",Mandatory=$true)]
+        #[switch]$vcenter,
         [switch]$details = $false
     )
 
-    $all = @()
+    
     try { 
         switch($PSCmdlet.ParameterSetName) {
             "Parent" {
                 $ParentObj = Get-VIObject -Name $Parent
-                $ParentvCenter = $ParentObj.UID | ?{$_ -match "@(?<vcenter>.*):443"} | %{$matches['vcenter']}
+                $ParentvCenter = $ParentObj.UID | Where-Object{$_ -match "@(?<vcenter>.*):443"} | ForEach-Object{$matches['vcenter']}
                 $VMHostViews = @(Get-View -Server $ParentvCenter -ViewType HostSystem -SearchRoot $ParentObj.ExtensionData.MoRef -Property Name)
                 Write-Host "[$Parent] Found $($VMHostViews.count) VMHosts in $ParentvCenter\$Parent"
                 $reportName += $Parent
@@ -1046,12 +818,16 @@ function Get-NTP_Health {
             Write-Host "No VMHosts found. Aborting."
             Return    
         } else {
-            $vmhosts = $VMHostViews | Sort Name | Get-VIObjectByVIView
+            $vmhosts = $VMHostViews | Sort-Object Name | Get-VIObjectByVIView
         }
     }
     catch { Write-Host -ForegroundColor Red $_.Exception.Message; Return }
 
-
+    $all = @()
+    foreach($_h in $vmhosts) {
+        Write-Host "[$($_h.Name)] Getting NTP metrics"
+        $all += GetHealth $_h
+    }
 
     switch($details) {
         $false { $all | Select-Object VMHost,NTPServer0,TimeDrift }
@@ -1096,7 +872,7 @@ function Get-HostLogs {
         }
 
         #Get a log of the current Log Type from the VMHost
-        $log = Get-Log -key $_k.Key -VMHost $h | select -ExpandProperty Entries
+        $log = Get-Log -key $_k.Key -VMHost $h | Select-Object -ExpandProperty Entries
 
         #Output the log to file
         $output = "$outfolder\$($datetime)_$($_k).log"
@@ -1123,40 +899,54 @@ function Connect-SSHPutty {
     #>
     [cmdletbinding()]
     Param (
-        [Parameter(Position=0)]$vmhost,
+        [Parameter(Position=0)][string]$VMHostname,
+        [Parameter(Position=1)][string]$Username,
         [string]$PuttyPath = "C:\scripts\putty.exe"
     )
 
-    if(!$vmhost) {
-        Write-Host "Querying vCenter for VMHosts..." 
-        try { $vmhosts = Get-VMHost -ErrorAction Stop | sort Name }
-        catch { Write-Host $_.Exceptption.Message -ForegroundColor Red; Return }
+    #Get all VMHosts
+    Write-Host "Querying vCenter for VMHosts..." 
+    try { $vmhosts = Get-VMHost -ErrorAction Stop | Sort-Object Name }
+    catch { Write-Host $_.Exceptption.Message -ForegroundColor Red; Return }
 
-        #Draw a menu of VMHosts
+    #Filter on $VMHostName
+    if($VMHostname) { $vmhosts = $vmhosts | Where-Object{$_.name -like "*$VMHostname*"} }
+    
+    #Draw a menu of VMHosts
+    if($vmhosts.count -ne 1) {
         Write-Host "Select a VMHost"
         for($i = 1; $i -lt $vmhosts.count+1; $i++) { Write-Host "[$i] $($vmhosts[$i-1].name)" }
         $option = Read-Host
+    } else { $option = 0 }
 
-        #Switch the chosen $option and assign $vmhost
-        switch -Regex ($option) {
-            "\d" { $vmhost = $vmhosts[$option-1] }
-            default { Write-Host "$option - Invalid Option"; Return }
-        }
+    #Switch the chosen $option and assign $vmhost
+    switch -Regex ($option) {
+        "\d" { $vmhost = $vmhosts[$option-1] }
+        default { Write-Host "$option - Invalid Option"; Return }
     }
 
     if(!(Test-Path $PuttyPath)) { Write-Host "$PuttyPath not found."; Return }
     try {
         #If SSH is not running, start it
-        $ssh = Get-VMHost $vmhost -ErrorAction Stop | Get-VMHostService | ?{$_.Key -eq "TSM-SSH"}
+        $ssh = Get-VMHost $vmhost -ErrorAction Stop | Get-VMHostService | Where-Object{$_.Key -eq "TSM-SSH"}
         if($ssh.Running -ne $true) { 
             Write-Host "[$vmhost] Starting SSH"
             $ssh | Start-VMHostService -confirm:$false
         }
-        #Connect Putty with SSH to root@$vmhost and wait for it to exit
-        Start-Process -FilePath $PuttyPath -ArgumentList "-ssh vadmin@$vmhost" -Wait
+
+        #Create argument list. Attempt to load credentials from SecureString
+        $arglist = "-ssh "
+        if($username) {
+            $arglist += "$username@$vmhost "
+            $pass = Get-SecureStringCredentials -Username $username -PlainPassword
+            if($pass) { $arglist += "-pw $pass" }
+        } else { $arglist += "$vmhost" }
+
+        #Launch Putty with arguments
+        Start-Process -FilePath $PuttyPath -ArgumentList $arglist -Wait
 
         #If SSH is Running, stop it
-        $ssh = Get-VMHost $vmhost -ErrorAction Stop | Get-VMHostService | ?{$_.Key -eq "TSM-SSH"}
+        $ssh = Get-VMHost $vmhost -ErrorAction Stop | Get-VMHostService | Where-Object{$_.Key -eq "TSM-SSH"}
         if($ssh.Running -eq $true) { 
             Write-Host "[$vmhost] Stopping SSH"
             $ssh | Stop-VMHostService -confirm:$false 
@@ -1168,12 +958,10 @@ function Connect-SSHPutty {
 function Get-DatastoreInventory {
     [cmdletbinding()]
     Param (
-        #[string]$exportPath = "C:\Scripts\Reports\Datastore_Inventory_$(Get-Date -Format yyyyMMdd_HHmmss).csv",
-        #[string]$rdm_exportPath = "C:\Scripts\Reports\RDM_Inventory_$(Get-Date -Format yyyyMMdd_HHmmss).csv"
     )
 
     $inventory = @()
-    Get-Datastore | ?{$_.ExtensionData.Info.GetType().Name -eq "VmfsDatastoreInfo"} | %{
+    Get-Datastore | Where-Object{$_.ExtensionData.Info.GetType().Name -eq "VmfsDatastoreInfo"} | ForEach-Object{
       if ($_) {
         Write-Host "[$($_.Name)] Collecting data"
         $ds = $_
@@ -1182,23 +970,10 @@ function Get-DatastoreInventory {
     }
 
     $inventory = $inventory | Select-Object -Unique -Property Datastore,"NAA.ID"
-    if($inventory.count -gt 0) {
-        Export-Results -results $inventory -exportName Datastore_Inventory
-        #$inventory | Export-Csv -NoTypeInformation -Path $exportPath
-        #Write-Host "Results exported to $exportPath" -ForegroundColor Green
-    }
+    if($inventory.count -gt 0) { Export-Results -results $inventory -exportName Datastore_Inventory }
 
-    Get-VM | Get-HardDisk -DiskType "RawPhysical","RawVirtual" | Select Parent,Name,DiskType,ScsiCanonicalName,DeviceName | Export-Results -results $_ -exportName RDM_Inventory
-}
-
-function Test-ConnectedvCenter {
-    if($global:DefaultVIServers.count -eq 0) {
-        Write-Host "Connect to a vCenter first using Connect-VIServer." -ForegroundColor Red
-        return
-    }
-
-    if(@(Get-View -ViewType Datacenter -Property Name).Count -gt 0) { return $true }
-    return $false
+    $rdm_inventory = @(Get-VM | Get-HardDisk -DiskType "RawPhysical","RawVirtual" | Select-Object Parent,Name,DiskType,ScsiCanonicalName,DeviceName)
+    if($rdm_inventory.Count -gt 0) { Export-Results -results $rdm_inventory -exportName RDM_Inventory }
 }
 
 function Get-VMHostFirmware {
@@ -1211,7 +986,7 @@ function Get-VMHostFirmware {
     #Test-ConnectedvCenter
     if($Parent) {
         $ParentObj = Get-VIObject -Name $Parent
-        $ParentvCenter = $ParentObj.UID | ?{$_ -match "@(?<vcenter>.*):443"} | %{$matches['vcenter']}
+        $ParentvCenter = $ParentObj.UID | Where-Object{$_ -match "@(?<vcenter>.*):443"} | ForEach-Object{$matches['vcenter']}
         $vmhosts = @(Get-View -Server $ParentvCenter -ViewType HostSystem -SearchRoot $ParentObj.ExtensionData.MoRef -Filter @{"Name"="$Name"})
         Write-Verbose "[$Name] Found $($vmhosts.count) VMHosts in $ParentvCenter\$Parent"
     } else {
@@ -1220,7 +995,7 @@ function Get-VMHostFirmware {
     }
 
     $results = @()
-    foreach($_v in $vmhosts) {
+    foreach($_v in ($vmhosts | Where-Object{$_.Runtime.ConnectionState -ne "notResponding"} | Sort-Object Name)) {
         $i++
         Write-Progress -Activity "Reading data from $($_v.Name)" -Status "[$i/$($vmhosts.count)]" -PercentComplete (($i/$vmhosts.count)*100)
         $esxcli = Get-EsxCLI -VMHost $_v.Name
@@ -1237,7 +1012,7 @@ function Get-VMHostFirmware {
             NIC_Driver = $nic0_details.driverinfo.Version
         }
     }
-    Write-Output $results
+    Write-Output $results | Format-Table
 }
 
 function Get-VM_PortGroup_Mapping {
@@ -1252,7 +1027,7 @@ function Get-VM_PortGroup_Mapping {
             catch { $pg = "ERROR" }
             try { $vds = Get-VDSwitch -RelatedObject $pg -ErrorAction Stop }
             catch { $vds = "ERROR" }
-            $vc = $vm.uid | ?{$_ -match "@(?<vcenter>.*):443"} | %{$matches['vcenter']}
+            $vc = $vm.uid | Where-Object{$_ -match "@(?<vcenter>.*):443"} | ForEach-Object{$matches['vcenter']}
             $results += [pscustomobject][ordered]@{
                 VM = $vm.Name
                 vCenter = $vc
@@ -1290,233 +1065,11 @@ function Optimize-ClusterBalance {
     }
 }
 
-function BalanceQuick {
-    [cmdletbinding()]
-    param(
-        $cluster,
-        $types,
-        $constraint
-    )
-    #goal: create a plan to reduce the load on the busiest vmhosts with least number of vmotions
-    #Determine which VMHosts are Connected and Powered On
-    $vmhosts = Get-Cluster $c | Get-VMHost | ?{$_.ConnectionState -eq "Connected" -and $_.PowerState -eq "PoweredOn"}
-    $vmhosts | %{Add-Member -InputObject $_ -MemberType NoteProperty -Name VMs -Value @($_ | Get-VM) -Force }
-
-    #Determine an "ideal" CPU ratio by dividing the sum of all VM CPUs by the sum of all VMHost CPUs
-    $idealcpu = ($types.vms | Measure-Object -Sum -Property NumCpu).Sum / ($vmhosts | Measure-Object -Sum -Property NumCpu).sum
-    
-    #Determine an "ideal" RAM allocation by dividing the sum of all VM memory by the number of VMHosts
-    $idealram = ($types.vms | Measure-Object -Sum -Property MemoryGB).Sum / $vmhosts.count
-    Write-Host "[$c] Ideal CPU ratio is $idealcpu. Ideal RAM allocation is $idealram GB."
-
-    $success = "empty"
-    do {
-        #Calculate CPU Ratio and Memory Allocation
-        foreach($_v in $vmhosts) {
-            Add-Member -InputObject $_v -MemberType NoteProperty -Name CPURatio -Value (($_v.vms | Measure-Object -Sum -Property NumCPU).sum / $_v.NumCpu) -Force
-            Add-Member -InputObject $_v -MemberType NoteProperty -Name MemoryAllocated -Value ($_v.vms | Measure-Object -Sum -Property MemoryGB).sum -Force
-        }
-
-        $busy_hosts = @($vmhosts | Sort-Object MemoryAllocated -Descending | ?{$_.MemoryAllocated -gt $idealram})
-        $idle_host = $vmhosts | Sort-Object MemoryAllocated | Select-Object -First 1
-        
-        if($busy_hosts.count -gt 0 -and $lastMove -ne "fail") {
-            Write-Host "[$c] $($busy_hosts.count) hosts over $($idealram)GB. Looking for balancing opportunities."
-            foreach($_host in $busy_hosts) {
-                foreach($_vm in ($_host.vms | Sort-Object -Property MemoryGB -Descending)) {
-                    if(($idle_host.MemoryAllocated + $_vm.MemoryGB) -lt $idealram) {
-                        Write-Host "[$c] $($_host.Name) - $($_vm.name) $($_vm.memorygb)GB will vMotion to $($idle_host.name)"
-                        Add-Member -InputObject $_host -MemberType NoteProperty -Name VMs -Value (@($_host.VMs) | ?{$_ -ne $_vm}) -Force
-                        Add-Member -InputObject $_vm -MemberType NoteProperty -Name TargetVMHost -Value ($idle_host.Name) -Force
-                        Add-Member -InputObject $idle_host -MemberType NoteProperty -Name VMs -Value (@($idle_host.VMs) + $_vm) -Force
-                        $lastMove = "success"
-                        break
-                    } else {
-                        write-Verbose "$($_vm.name) $($_vm.memorygb) will NOT fit on the idle host"
-                        $lastMove = "fail"
-                    }
-                }
-                if($lastMove -eq "success") { break }
-                elseif($lastMove -eq "fail") { Write-Host "[$c] $($_host.name) - No balancing opportunities found" }
-            }
-        } else {
-            Write-Host "[$c] More balancing not possible"
-            $success = "turtles"
-        }
-    } while($success -ne "turtles")
-    return $vmhosts
-}
-
-function GetVMTypes($c) {
-    #Initialize array to store results
-    $results = @()
-    try {
-    #Get all VMs in target cluster
-        $vms = Get-Cluster $c -ErrorAction Stop | Get-VM | sort Name
-    }
-
-    catch { WriteLog "Startup-Failed" "Unable to find cluster '$c' on vCenter. Are you connected to vCenter?"; Return }
-    Write-Host "[$($c)] Sorting $($vms.count) VMs"
-    #Using regex, remove two or three numbers at the end of the VM, and add the Type as a NoteProperty on the VM object. This shortens prod-exchange101 into prod-exchange.
-    $vms | %{ Add-Member -InputObject $_ -MemberType NoteProperty -Name Type -Value ($_.Name -replace "(\d{3}$|\d{2}$)") -Force }
-   
-    #Select the unique Types found
-    foreach($t in ($vms | select -ExpandProperty Type -Unique)) {
-        #Find all VMs matching the current Type
-        $typevms = $vms | ?{$_.Type -eq $t}
-        Write-Verbose "$($t): Found $($typevms.count) VMs"
-        #Create an object to store the count, memory, and cpu for all VMs of the current Type
-        $results += New-Object PSObject -Property @{
-            Type = $t
-            Count = $typevms.count
-            MemoryGB = ($typevms | Measure-Object -Sum -Property MemoryGB).sum
-            NumCpu = ($typevms | Measure-Object -Sum -Property NumCpu).sum
-            VMs = $typevms
-        }
-    }
-    #Return VM Types for further processing
-    Write-Host "[$($c)] Sorted $(($results | Measure-Object -Property count -Sum).Sum) VMs into $($results.count) types"
-    return $results | sort NumCpu
-}
-
-#Create a plan to balance VMs across a cluster by determing ideal CPU ratio and RAM allocation, then looping through VM types and assigning VMs to the VMHost with the lowest CPU Ratio.
-#VMs are round robined onto hosts as long as the CPU Ratio is below 85% of the ideal CPU Ratio. If it is above, the VM is assigned to the VMHost with the lowest CPU Ratio.
-#VMs are not actually moved, but rather just assigned locations to be moved to.
-function BalanceRoundRobin($c,$types,$idealtype) {
-    #Determine which VMHosts are Connected and Powered On
-    $vmhosts = Get-Cluster $c | Get-VMHost | ?{$_.ConnectionState -eq "Connected" -and $_.PowerState -eq "PoweredOn"}
-    #Determine an "ideal" CPU ratio by dividing the sum of all VM CPUs by the sum of all VMHost CPUs
-    $idealcpu = ($types.vms | Measure-Object -Sum -Property NumCpu).Sum / ($vmhosts | Measure-Object -Sum -Property NumCpu).sum
-    #Determine an "ideal" RAM allocation by dividing the sum of all VM memory by the number of VMHosts
-    $idealram = ($types.vms | Measure-Object -Sum -Property MemoryGB).Sum / $vmhosts.count
-    Write-Host "[$c] Ideal CPU ratio is $idealcpu. Ideal RAM allocation is $idealram GB."
-
-    $hostindex = 0
-    #For each of the Types
-    foreach($t in $types) {
-        #For each VM in the current Type
-        foreach($vm in $t.vms) {
-            $thisHost = $vmhosts[$hostindex]
-            #Find out the CPU ratio of $vmhost[$hostindex] and add it as a property
-            Add-Member -InputObject $thisHost -MemberType NoteProperty -Name CurrentRatio -Value (($thisHost.vms | Measure-Object -Sum -Property NumCPU).sum / $thisHost.NumCpu) -Force 
-            #If the VMHost CurrentRatio is greater than 85% of the ideal ratio, find a new host for placement
-            if($idealtype = "RAM") { $ideal = $idealram }
-            elseif($idealtype -eq "CPU") { $ideal = $idealcpu }
-            if(($thisHost.CurrentRatio)/$ideal -gt .85) { 
-                Write-Verbose "[$($thisHost.name)] CPU Ratio $($thisHost.CurrentRatio) is too high. Looking for new host"
-                #Calculate the CurrentRatio for all hosts in the cluster
-                $vmhosts | %{Add-Member -InputObject $_ -MemberType NoteProperty -Name CurrentRatio -Value (($_.vms | Measure-Object -Sum -Property NumCPU).sum / $_.NumCpu) -Force}
-                #Set the hostindex to the index of the VMHost with the lowest CurrentRatio
-                $hostindex = $vmhosts.name.indexof(($vmhosts | sort CurrentRatio | select -First 1).name)
-                $thisHost = $vmhosts[$hostindex]
-                Write-Verbose "[$($thisHost.name)] Lowest ratio is $($thisHost.CurrentRatio)"
-            }
-
-            #Add a property to the VM to indicate its Target VMHost
-            Write-Verbose "[$($thishost.name)] Assigning $($vm.name)"
-            Add-Member -InputObject $vm -MemberType NoteProperty -Name TargetVMHost -Value ($thisHost.Name) -Force
-            #If VMs have already been assigned to the Target VMHost
-            if($thisHost.VMs) {
-                #Update the VMs property and add the new VM
-                Add-Member -InputObject $thisHost -MemberType NoteProperty -Name VMs -Value ((@($thisHost.VMs) + $vm)) -Force
-            } else { Add-Member -InputObject $thisHost -MemberType NoteProperty -Name VMs -Value @($vm) -Force }
-            #After each VM placement, increment $hostindex
-            $hostindex++; if($hostindex -ge $vmhosts.count) { $hostindex = 0 }
-        }
-    }
-    #Return balancing plan for further processing
-    return $vmhosts | sort Name
-}
-
-#Compare the before and after CPU ratios and memory allocations
-function CompareBeforeAfter($vmhosts) {
-    #Intiailize array to store results
-    $results = @()
-    foreach($vmhost in $vmhosts) {
-        #Calculate and store before/after details
-        $currVMs = $vmhost | Get-VM | sort name
-        $results += [pscustomobject][ordered]@{
-            VMHost = $vmhost.Name
-            BeforeCPURatio = "{0:P0}" -f (($currVMs | Measure-Object -Sum -Property NumCpu).sum / $vmhost.NumCpu)
-            AfterCPURatio = "{0:P0}" -f (($vmhost.vms | Measure-Object -Sum -Property NumCpu).sum / $vmhost.NumCpu)
-            BeforeMemoryGB = "{0:N2}" -f ($currVMs | Measure-Object -Sum -Property MemoryGB).sum
-            AfterMemoryGB = "{0:N2}" -f ($vmhost.vms | Measure-Object -Sum -Property MemoryGB).sum
-        }
-    }
-    #Display before/after details
-    $results | Sort-Object AfterMemoryGB -Descending | Format-Table -AutoSize
-}
-
-function vMotionVM($vmstomove,$vm) {
-    if($vm.TargetVMHost -eq $vm.VMHost) {
-        #If the VM is already on the target VM Host, do nothing
-        Write-Host "[$($vm.name)] Already on $($vm.TargetVMHost)"
-    } else {
-        #If $whatif is equal to false, move the VM to it's target host
-        Write-Host "[$($vm.name)] vMotioning from $($vm.VMHost.name) to $($vm.TargetVMHost)"
-        if($whatif -eq $false) { $vm | Move-VM -Destination $vm.TargetVMHost -RunAsync | out-null }
-    }
-    #Remove the VM from the move list, and return it
-    return $vmstomove | ?{$_ -ne $vm}
-}
-
-#Choose a random VM and move it to it's target VM Host. Exclusions can be set. If too many vMotions are running at once, wait till below threshold, then continue.
-function MigrateVMs($vmhosts) {
-    #Determine which VMs are going to move
-    #$vmstomove = @()
-    $vmstomove = @($vmhosts.vms | ?{$_ -ne $null -and $_.name -notmatch $exclusions -and $_.targetvmhost -ne $null})
-    if($vmstomove.Count -eq 0) {
-        Write-Host "No VMs to balance."
-        return
-    }
-    Write-Host "There are $($vmstomove.count) VMs to vMotion to complete this balancing. Hit Enter to start balancing"
-    Read-Host
-
-    #Determine which VMs are not going to move because of exclusions and will need to be manually migrated
-    $excludedvms = $vmhosts.vms | ?{$_.name -match $exclusions -and $_.vmhost.name -ne $_.targetvmhost} | sort Name
-    if($excludedvms) {
-        Write-Host "`nThese VMs will not be vMotioned because of exclusions. Migrate these manually."
-        $excludedvms | select name,@{n="SourceVMHost";e={$_.VMHost.name}},TargetVMHost
-        Write-Host "`n"
-    }
-
-    #Loop while there are VMs left to move
-    while($vmstomove.count -gt 0) {
-        #Pick a random VM from the list
-        $randomvm = $vmstomove | Get-Random
-        
-        #If the TargetVMHost of the random VM is the same as the last moved VM, pick a new VM. Repeat up to 5 times. This prevents all the vMotions from happening to the same VMHost.
-        $i = 0
-        while($randomvm.TargetVMHost -eq $lastvm.TargetVMHost -and $i -lt 5) {
-            Write-Verbose "Finding a new VM to migrate..."
-            $randomvm = $vmstomove | Get-Random
-            $i++
-        }
-
-        #Get all the current vMotion tasks from vCenter
-        $tasks = Get-Task -Status Running | ?{$_.name -like "*RelocateVM_Task*"}
-        #If there are less running vMotion tasks than the limit....
-        if($tasks.count -lt $vmotionlimit) { 
-            #Move a random VM to it's target VM Host
-            $vmstomove = vMotionVM $vmstomove $randomvm; $lastvm = $randomvm 
-        } else {
-            #While there are too many vMotions running...
-            while($tasks.count -ge $vmotionlimit) {
-                #Write a verbose message, wait 15 seconds, then check again
-                Write-Verbose "vMotions are limited to $vmotionlimit"
-                Start-Sleep -Seconds 15
-                $tasks = Get-Task -Status Running | ?{$_.name -like "*RelocateVM_Task*"}
-            }
-            #Move a random VM to it's target VM Host
-            $vmstomove = vMotionVM $vmstomove $randomvm; $lastvm = $randomvm
-        }
-    }
-}
-
 function Convert-SRMxmlToDRcsv {
     <#
     .DESCRIPTION
     Used https://ssbkang.com/2016/02/09/powercli-report-review-srm-source-destination-network-settings as a reference
+    C:\Program Files\VMware\VMware vCenter Site Recovery Manager\bin\?dr-ip-reporter.exe
 
     1. Generate a srm-export.xml by using dr-ip-reporter.exe on the VM with SRM 5.1
     dr-ip-reporter.exe --cfg "C:\Program Files\VMware\VMware vCenter Site Recovery Manager\config\vmware-dr.xml" --out "D:\temp\srm-export.xml" --vc "VCENTER.DOMAIN.LOCAL"
@@ -1526,7 +1079,7 @@ function Convert-SRMxmlToDRcsv {
     
     .EXAMPLE
     For migrating between SRM 5.1 to SRM 5.8+, a CSV with all Recovery Plan settings can be exported(nic index, ip, subnet, gateway, dns, suffixes)
-    Convert-SRMxmlToDRcsv -fullExport
+    Convert-SRMxmlToDRcsv -SRMxmlExport .\srm-export.xml -fullExport
 
     .EXAMPLE
     Exports multiple CSVs of VMs with ProtectedIP and RecoveryIP for each Protection Group
@@ -1546,18 +1099,18 @@ function Convert-SRMxmlToDRcsv {
     switch($PSCmdlet.ParameterSetName) {
         "DR" {
             $results = @()
-            $input_file.DrMappings.ProtectionGroups.ProtectionGroup | Sort Name | ForEach-Object {
+            $input_file.DrMappings.ProtectionGroups.ProtectionGroup | Sort-Object Name | ForEach-Object {
                 $protection_group = $_.Name
                 $protected_ip = ""
                 $recovery_ip = ""
-                $_.ProtectedVm | Sort Name | ForEach-Object {
+                $_.ProtectedVm | Sort-Object Name | ForEach-Object {
                     $vm = $_.Name
                     try { $vm_hostname = [system.net.dns]::gethostbyname($vm).hostname }
                     catch { 
-                        Write-Host "[$vm] Failed to query hostname from DNS. Defaulting to $vm.corporate.citizensfla.com"
-                        $vm_hostname = $vm + ".corporate.citizensfla.com"
+                        Write-Host "[$vm] Failed to query hostname from DNS. Defaulting to $vm.corporate.domain.local"
+                        $vm_hostname = $vm + ".corporate.domain.local"
                     }
-                    $_.CustomizationSpec | Sort Site | ForEach-Object {
+                    $_.CustomizationSpec | Sort-Object Site | ForEach-Object {
                         $ip_settings = $_.ConfigRoot.e.ipSettings
                         if($ip_settings) {
                             if($_.Site -eq "Site-1") {
@@ -1582,7 +1135,7 @@ function Convert-SRMxmlToDRcsv {
         }
         "Full" {
             $protection_groups = @()
-            $input_file.DrMappings.ProtectionGroups.ProtectionGroup | Sort Name | ForEach-Object {
+            $input_file.DrMappings.ProtectionGroups.ProtectionGroup | Sort-Object Name | ForEach-Object {
                 $protection_groups += [pscustomobject][ordered]@{
                     ProtectionGroup = $_.Name
                     ProtectionGroupID = $_.ID
@@ -1591,9 +1144,9 @@ function Convert-SRMxmlToDRcsv {
             Write-Verbose "Detected $($protection_groups.count) protection groups"
             
             $recovery_plans = @()
-            $input_file.DrMappings.RecoveryPlans.RecoveryPlan | Sort Name | ForEach-Object {
+            $input_file.DrMappings.RecoveryPlans.RecoveryPlan | Sort-Object Name | ForEach-Object {
                 $id = $_.ProtectionGroup
-                $protection_group = $protection_groups | ?{$_.ProtectionGroupID -eq $id} | Select-Object -ExpandProperty ProtectionGroup
+                $protection_group = $protection_groups | Where-Object{$_.ProtectionGroupID -eq $id} | Select-Object -ExpandProperty ProtectionGroup
                 $recovery_plans += [pscustomobject][ordered]@{
                     RecoveryPlan = $_.Name
                     ProtectionGroup = $protection_group
@@ -1602,12 +1155,12 @@ function Convert-SRMxmlToDRcsv {
             Write-Verbose "Found $($recovery_plans.count) recovery plans"
 
             $results = @()
-            $input_file.DrMappings.ProtectionGroups.ProtectionGroup | Sort Name | ForEach-Object {
+            $input_file.DrMappings.ProtectionGroups.ProtectionGroup | Sort-Object Name | ForEach-Object {
                 $protection_group = $_.Name
-                $_.ProtectedVm | Sort Name | ForEach-Object {
+                $_.ProtectedVm | Sort-Object Name | ForEach-Object {
                     $vm = $_.Name
-                    $recovery_plan = $recovery_plans | ?{$_.ProtectionGroup -eq $protection_group} | Select-Object -ExpandProperty RecoveryPlan
-                    $_.CustomizationSpec | Sort Site | ForEach-Object {
+                    $recovery_plan = $recovery_plans | Where-Object{$_.ProtectionGroup -eq $protection_group} | Select-Object -ExpandProperty RecoveryPlan
+                    $_.CustomizationSpec | Sort-Object Site | ForEach-Object {
                         $site = $_.Site
                         $_.ConfigRoot.e | ForEach-Object {
                             $nic = $_.id
@@ -1620,11 +1173,11 @@ function Convert-SRMxmlToDRcsv {
                                 $ip_address = $ip_settings.ip.ipAddress
                                 $subnetmask = $ip_settings.subnetMask
                                 $gateway = $ip_settings.gateway.e."#text"
-                                $ip_settings.dnsServerList.e | % { Set-Variable -Name "DNS$($_.id)" -Value $_."#text" }
+                                $ip_settings.dnsServerList.e | ForEach-Object { Set-Variable -Name "DNS$($_.id)" -Value $_."#text" }
                             }
 
                             if($dns_suffixes) {
-                                $dns_suffixes.e | % { Set-Variable -Name "DNSSuffix$($_.id)" -Value $_."#text" }
+                                $dns_suffixes.e | ForEach-Object { Set-Variable -Name "DNSSuffix$($_.id)" -Value $_."#text" }
                             }
                             $results += [pscustomobject][ordered]@{
                                 ProtectionGroup = $protection_group
@@ -1692,60 +1245,1324 @@ Function Set-UsbDevice {
     $_this.ReconfigVM_Task($spec)  
 }
 
-filter Set-VMBIOSSetup 
-{ 
-   param( 
-        [switch]$Disable, 
-        [switch]$PassThru 
-   )
-   if($_ -is [VMware.VimAutomation.Types.VirtualMachine]) 
-    { 
-       trap { throw $_ }        
-        
-       $vmbo = New-Object VMware.Vim.VirtualMachineBootOptions 
-       $vmbo.EnterBIOSSetup = $true 
-        
-       if($Disable) 
-        { 
-           $vmbo.EnterBIOSSetup = $false 
-        } 
+function Invoke-HostMath {
+    param (
+        [Parameter(ValueFromPipeLine=$True)]
+        [VMware.VimAutomation.Types.VirtualMachine[]]$vm,
+        $label,
+        $reportCSV = "C:\Scripts\Reports\HostMath.csv",
+        [switch]$export = $false
+    )
+    begin {
+        $vms = @()
+        $g9_cores = 24
+        $g9_memory = 512
+        $g8_cores = 16
+        $g8_memory = 256
+        $g7_cores = 12
+        $g7_memory = 192
+    }
 
-       $vmcs = New-Object VMware.Vim.VirtualMachineConfigSpec 
-       $vmcs.BootOptions = $vmbo 
+    process {
+        $vms += $vm
+    }
+    End {
+        if($label -eq $null) { $Label = "VMs" }
 
-        ($_ | Get-View).ReconfigVM($vmcs) 
-        
-       if($PassThru) 
-        { 
-           Get-VM $_ 
-        } 
-    } 
-   else 
-    { 
-       Write-Error “Wrong object type. Only virtual machine objects are allowed.“ 
-    } 
-} 
+        $vms_cores = ($vms | Measure-Object -Sum -Property NumCPU).Sum
+        $vms_memory = [system.math]::Ceiling(($vms | Measure-Object -Sum -Property MemoryGB).Sum)
 
-function Test-VMX {
-    [CmdletBinding()]
-    Param(
-    [Parameter(Mandatory=$True,Position=1)]
-        [string]$Name
+        $vm_60_requiredgb = [system.math]::Ceiling(($vms_memory * 1.4))
+        $vm_2to1_requiredcores = [system.math]::Ceiling(($vms_cores / 2))
+
+        $g9_60_hosts = [system.math]::Ceiling($vm_60_requiredgb/$g9_memory)
+        $g9_2to1_hosts = [system.math]::Ceiling(($vm_2to1_requiredcores / $g9_cores))
+
+        $g8_60_hosts = [system.math]::Ceiling($vm_60_requiredgb/$g8_memory)
+        $g8_2to1_hosts = [system.math]::Ceiling(($vm_2to1_requiredcores / $g8_cores))
+
+        $g7_60_hosts = [system.math]::Ceiling($vm_60_requiredgb/$g7_memory)
+        $g7_2to1_hosts = [system.math]::Ceiling(($vm_2to1_requiredcores / $g7_cores))
+
+        $results = [pscustomobject][ordered]@{
+            Label = $label
+            VM_Count = $vms.count
+            VM_Cores = $vms_cores
+            VM_Memory = $vms_memory
+            "VM_60%_Mem__ReqGB" = $vm_60_requiredgb
+            "VM_CPU2to1__ReqCores" = $vm_2to1_requiredcores
+
+            "G9_60%_Mem__Hosts" = $g9_60_hosts
+            "G9_60%_Mem__CPURatio" =  [system.math]::Round(($vms_cores / ($g9_60_hosts *  $g9_cores)),1)
+            "G9_CPU2to1__Hosts" = $g9_2to1_hosts
+            "G9_CPU2to1__MemGB" =  ($g9_2to1_hosts * $g9_memory)
+
+            "G8_60%_Mem__Hosts" = $g8_60_hosts
+            "G8_60%_Mem__CPURatio" =  [system.math]::Round(($vms_cores / ($g8_60_hosts *  $g8_cores)),1)
+            "G8_CPU2to1__Hosts" = $g8_2to1_hosts
+            "G8_CPU2to1__MemGB" =  ($g8_2to1_hosts * $g8_memory)
+
+            "G7_60%_Mem__Hosts" = $g7_60_hosts
+            "G7_60%_Mem__CPURatio" =  [system.math]::Round(($vms_cores / ($g7_60_hosts *  $g7_cores)),1)
+            "G7_CPU2to1__Hosts" = $g7_2to1_hosts
+            "G7_CPU2to1__MemGB" =  ($g7_2to1_hosts * $g7_memory)
+        }
+
+        if($export) {
+            if(!(Test-Path $reportCSV)) {
+                Write-Host "Exporting results to $reportCSV" -ForegroundColor Green
+                $results | Export-Csv $reportCSV -NoTypeInformation
+            } else {
+                $report = @(Import-Csv $reportCSV)
+                Write-Host "Appending results to $reportCSV" -ForegroundColor Green
+                $report += $results
+                $report | Export-Csv $reportCSV -NoTypeInformation
+            }
+        } else {
+            $results
+        }
+    }
+}
+
+function Export-1000v {
+    [cmdletbinding()]
+    Param (
     )
 
-    if($Name.EndsWith(".txt")) { 
-        $Names = @(Get-Content $Name) 
-    } else { $Names = $Name }
+    try { 
+        WriteLog "Initialization" "Getting DVS data"
+        $dvs  = @(Get-VDSwitch  -ErrorAction Stop | Sort-Object Name)
+        $vcenter = $dvs[0].uid | Where-Object{$_ -match "@(?<vcenter>.*):443"} | ForEach-Object{$matches['vcenter']}
+    }
+    catch { WriteLog "ERROR" "Failed to get DVS data" "Red"; Return }
 
-    foreach($_name in $Names ) {
+    $results = @()
+    foreach($_d in $dvs) {
+        $vdsname = "$($_d.name)"
+        WriteLog "$vdsname" "Getting configuration"
+        try {
+            $dvpgs = Get-VDPortgroup -VDSwitch $_d -ErrorAction Stop | Sort-Object Name
+            foreach($_dvpg in $dvpgs) {
+                $vlan = $null
+                $vlan = $_dvpg.vlanconfiguration.vlanid
+                $pgname = $_dvpg.Name
+                if(!$vlan) {
+                    $pgName | Where-Object{$_ -match "VLAN_(?<vlanid>[0-9]*)_.*"} | ForEach-Object{
+                        if($matches['vlanid']) {
+                            $vlan = $matches['vlanid']
+                            WriteLog "$vdsname" "$pgname [VLAN == $vlan ]"
+                        }
+                    }
+                }
+                $results += [pscustomobject][ordered]@{
+                    N1K = $vdsname
+                    PortGroup = $pgname
+                    VLANID = $vlan
+                    NumPorts = $_dvpg.NumPorts
+                    PortBinding = $_dvpg.PortBinding
+                }
+            }
+        }
+        catch { WriteLog "ERROR" $_.Exception.Message $logfile "Red" }
+    }
+    Export-Results -results $results -exportName "1000v_Export_$($vCenter)"
+}
+
+function Import-1000v {
+    [cmdletbinding()]
+    param (
+        $1000v_CSV
+    )
+
+    $portgroups = Import-Csv $1000v_CSV
+    $dvs = @($portgroups | Select-Object -Unique N1K | Select-Object -ExpandProperty N1K | Sort-Object)
+
+    foreach($_d in $dvs) {
+        try {
+            $vdspgs = $portgroups | Where-Object{$_.N1K -eq $_d -and $_.VLANID}
+            $vdspgs_skipped = $portgroups | Where-Object{$_.N1K -eq $_d -and !($_.VLANID)}
+            foreach($_pg in $vdspgs_skipped) {
+                WriteLog "$_d" "No VLANID defined for $($_pg.PortGroup). Skipping"
+            }
+            if($vdspgs[0].ImportVDS) { $vdsname = $vdspgs[0].ImportVDS }
+            else { $vdsname = Read-Host "[$_d] Which VDS should this configuration be imported into?" }
+            $vds_obj = Get-VDSwitch -Name $vdsname -ErrorAction Stop
+            WriteLog "$vdsname" "VDS found"
+        }
+
+        catch {
+            if($_.Exception.Message -like "*was not found using the specified filter*") {
+                WriteLog "$vdsname" "VDS does not exist. Creating..."
+
+                if($vdspgs[0].ImportDatacenter) { $datacenter = $vdspgs[0].ImportDatacenter }
+                else { $datacenter = Read-Host "[$vdsname] Which Datacenter should this be created in?" }
+
+                $datacenter_obj = Get-Datacenter -Name $datacenter
+                if($datacenter_obj) {
+                    New-VDSwitch -Name $vdsname -Location $datacenter_obj -NumUplinkPorts 2
+                    $vds_obj = Get-VDSwitch -Name $vdsname -ErrorAction Stop
+                } else {
+                    WriteLog "$vdsname" "Failed to find $datacenter datacenter"
+                }
+            } else {
+                WriteLog "ERROR" $_.Exception.Message
+            }
+        }
+
+        $vdsCurrentpgs = @(Get-VDPortgroup -VDSwitch $vds_obj)
+        foreach($_pg in $vdspgs) {
+            $pg_name = $_pg.PortGroup
+            if(@($vdsCurrentpgs | Where-Object{$_.Name -eq $pg_name}).count -eq 0) {
+                WriteLog "$vdsname" "$pg_name does not exist. Creating"
+                write-debug "here"
+                New-VDPortgroup -VDSwitch $vds_obj -Name $pg_name -VlanId $_pg.VLANID -NumPorts 256
+            } else {
+                WriteLog "$vdsname" "$pg_name already exists. Skipping"
+            }
+        }
+    }
+
+}
+
+function Export-VCRoles {
+    [cmdletbinding()]
+    param (
+    )
+    $roles = Get-VIRole | Where-Object{$_.IsSystem -eq $false}
+    $vcenter = Get-vCenterFromUID $roles[0].Uid
+
+    $results = @()
+    foreach ($role in $roles) {
+        WriteLog "$($role.name)" "Getting Privileges"
+        $privs = Get-VIPrivilege -Role $role 
+        foreach($_p in $privs) {
+            $results += [pscustomobject][ordered]@{
+                Role = $role.Name
+                Description = $role.Description
+                RoleID = $role.Id
+                ID = $_p.Id
+            }
+        }
+    }
+    Export-Results -exportName "$($vCenter)_Role_Privileges" -results $results
+}
+
+function Import-VCRoles {
+    [cmdletbinding()]
+    param (
+        $CSV
+    )
+
+    $privs = Import-Csv $CSV
+    $roles_ids = $privs | Select-Object RoleID -Unique -ExpandProperty RoleID
+    $roles_obj = Get-VIRole
+
+    foreach($_id in $roles_ids) {
+        if($_id -eq 587203261) { Write-Debug "here" }
+        $role_privs_new = $privs | Where-Object{$_.RoleID -eq $_id}
+        if([int]$_id -lt 5000) {
+            $role_name = $role_privs_new[0].Role
+        } else {
+            $role_name = $role_privs_new[0].Description
+        }
+        
+        if($roles_obj.Name.Contains($role_name)) {
+            WriteLog "$role_name" "Role exists" -fcolor "Green"
+        } else {
+            WriteLog "$role_name" "Creating role" -fcolor "Yellow"
+            New-VIRole -Name $role_name
+        }
+
+        $role_privs_current = @(Get-VIRole $role_name | Get-VIPrivilege)
+        foreach($_p in $role_privs_new) {
+            if($role_privs_current.id.Contains($_p.Id) -eq $false) {
+                WriteLog "$role_name" "Adding $($_p.Id) to role" -fcolor "Yellow"
+                try {
+                    $priv_new = Get-VIPrivilege -Id $_p.Id -ErrorAction Stop
+                    Set-VIRole -Role $role_name -AddPrivilege $priv_new
+                }
+                catch {
+                    WriteLog "$role_name" "$($_p.ID) privilege does not exist" -fcolor "Red"
+                }
+                
+            } else {
+                WriteLog "$role_name" "$($_p.Id) prviliege already exists" -fcolor "Green"
+            }
+        }
+    }
+}
+
+function Export-VCFolders {
+    [cmdletbinding()]    
+    $folders = Get-Folder
+    $vcenter = Get-vCenterFromUID $folders[0].Uid
+
+    $results = @()
+    foreach($_f in $folders) {
+        Write-Host "Working on $($_f.Name)"
+        $fpath = Get-FolderPath -Folder $_f
+
+        $results += [pscustomobject][ordered]@{
+            Folder = $fpath.Name
+            Parent = $fpath.Parent
+            Path = $fpath.Path
+            Type = $fpath.Type
+        }
+    }
+
+    Export-Results -results $results -exportName "$($vcenter)_FolderPaths"
+}
+
+function Import-VCFolders {
+    [cmdletbinding()]
+    param (
+        $CSV
+    )
+
+    $folders = Import-Csv $csv | Where-Object{$_.Type -eq "blue" -and $_.Folder -ne "vm"}
+
+    foreach($_f in ($folders | Where-Object{$_.Parent -eq "vm"})) {
         try { 
-            Get-VM $_name | Set-VMBIOSSetup 
-            Get-VM $_name | Set-VMBIOSSetup -Disable
-            Write-Host "[$_name] VMX modified successfully"
+            Get-Folder -Name $_f.Folder -ErrorAction Stop | Out-Null
+            Write-Host "$($_f.Folder) Folder already exists"
+        }
+        Catch { 
+            Write-Host "Creating $($_f.Folder)"
+            New-Folder -Name $_f.Folder -Location (Get-Folder vm) }
+    }
+
+    foreach($_f in ($folders | Where-Object{$_.Parent -ne "vm"})) {
+        try { 
+            Get-Folder -Location $_f.Parent -Name $_f.Folder -ErrorAction Stop | Out-Null
+            Write-Host "$($_f.Folder) Folder already exists in $($_f.Parent)"
+        }
+        Catch { 
+            Write-Host "Creating $($_f.Folder)"
+            New-Folder -Name $_f.Folder -Location (Get-Folder $_f.Parent) }
+    }
+}
+
+function Start-MigrationMonitor {
+    [cmdletbinding()]
+    param (
+        $servers = ".\mgtest.txt",
+        [string]$label,
+        $throttle = 5
+    )
+
+    $rscompleted = 0
+    Get-RSJob | Where-Object{$_.State -eq "Completed"} | Remove-RSJob -ErrorAction SilentlyContinue
+    $GuestCredentials = Get-SecureStringCredentials $global:AdminUsername
+
+    if($servers.EndsWith(".txt")) { 
+        $serverlist = @(Get-Content $servers) 
+    } else { $serverlist = @($servers) }
+
+    #Populate $ServerStatus with initial values
+    $ServerStatus = @()
+    foreach($_s in $serverlist) {
+        $ServerStatus += [pscustomobject][ordered]@{
+            "Server" = $_s
+            "IP" = "Unknown"
+            "PingIP" = "Unknown"
+            "PingVM" = "Unknown"
+            "WMIVM" = "Unknown"
+        }
+    }
+    #$ServerStatus = $ServerStatus | Sort Server
+    
+    $mode = "Testing"
+    $refresneeded = $true
+    while($mode -ne "Validation") {
+        #Get results from completed runspaces and update $ServerStatus
+        $rsjobs_complete = @(Get-RSJob | Where-Object{$_.state -eq "Completed" -and $_.Name -like "MV__*"})
+        if($rsjobs_complete.Count -gt 0) {
+            Write-Verbose "Processing $($rsjobs_complete.count) complete runspaces"
+            foreach($rsjob in $rsjobs_complete) {
+                $rsjob_results = Receive-RSJob -Id $rsjob.ID
+                $rsjob_server = ($rsjob.name -split "_+")[1]
+                $rsjob_test = ($rsjob.name -split "_+")[2]
+                ($ServerStatus | Where-Object{$_.Server -eq $rsjob_server}).$rsjob_test = $rsjob_results
+                $rscompleted++
+                Remove-RSJob -Id $rsjob.ID
+            }
+            $refreshneeded = $true
+        } else { $refreshneeded = $false }
+
+        #Change the $mode to Validation after all testing has finished
+        $completed = @($ServerStatus | Where-Object{$_.IP -notmatch "(Unknown|Testing)" -and $_.PingIP -match "(Pass|Fail|Unknown)" -and $_.PingVM -match "(Pass|Fail)" -and $_.WMIVM -match "(Pass|Fail)" -and $_.InvokeVM -match "(Pass|Fail)"})
+        if($completed.count -eq $ServerStatus.count) { $mode = "Validation" }
+
+        #Display the current $ServerStatus
+        $rsjobs = @(Get-RSJob)
+        if($refreshneeded) {
+            #Read-Host
+
+            Clear-Host
+            if($label) {  Write-Host "Label: `t`t`t`t$Label" }
+            #Write-Host "Mode:`t`t`t`t$mode"
+            Write-Host "Completed:`t`t`t$($completed.count)/$($serverstatus.count)"
+            Write-Host "Runspaces Active/Completed:`t$($rsjobs.count)/$rscompleted"
+            $ServerStatus | Format-Table | Out-String | ColorWord2 -word 'Fail','Pass' -color 'Red','Green'
+        }
+
+        $i = 0
+        $tests = @("IP","PingIP","PingVM","WMIVM","InvokeVM")
+        :outer foreach($server in $ServerStatus) {
+            foreach($test in $tests) {
+                $rsscript = $null
+                $arglist = @{}
+
+                if($server.$test -eq "Unknown") {
+                    switch($test) {
+                        "IP" {
+                            $vm = Get-VM $server.Server -ErrorAction SilentlyContinue
+                            #Get the last IPv4 address
+                            if($vm) { $arglist = @($vm.Guest.IPAddress | Where-Object{$_ -notlike "*:*" -and $_ -notlike "169.*"} | Select-Object -Last 1) } 
+                            else { $arglist = @($null) }
+                            
+                            $rsscript = {
+                                param($ip)
+                                if($ip -ne $null) {
+                                    return $ip
+                                } else { return 'Fail' }
+                            }
+                        }
+                        "PingIP" {
+                            if($server.IP -ne "Unknown" -and $server.IP -ne "Testing" -and $server.IP -ne "Fail") {
+                                $arglist = @($server.IP)
+                                $rsscript = {
+                                    param ($Computername)
+                                    try {
+                                        if(Test-Connection -ComputerName $Computername -Count 1 -ErrorAction Stop) {
+                                            return 'Pass'
+                                        } else { return 'Fail' }
+                                    }
+                                    catch { return 'Fail' }
+                                }
+                            }
+                        }
+                        "PingVM" {
+                            $arglist = @($server.Server)
+                            $rsscript = {
+                                param($ComputerName)
+                                try {
+                                    if(Test-Connection -ComputerName $ComputerName -Count 1 -ErrorAction SilentlyContinue) {
+                                        return 'Pass'
+                                    } else { return 'Fail' }
+                                }
+                                catch { return 'Fail' }
+                            }
+                        }
+                        "WMIVM" {
+                            $arglist = @($server.Server,$GuestCredentials)
+                            $rsscript = {
+                                param($ComputerName, $GuestCredentials)
+                                try {
+                                    if(Get-WmiObject -ComputerName $ComputerName -Class win32_operatingsystem -cred $GuestCredentials -ErrorAction Stop) {
+                                        return 'Pass'
+                                    } else { return 'Fail' }
+                                }
+                                catch { return 'Fail' }
+                            }
+                        }
+                        "InvokeVM" {
+                            $arglist = @($server.Server,$GuestCredentials)
+                            $rsscript = {
+                                param($ComputerName, $GuestCredentials)
+                                try {
+                                    if(Invoke-VMScript -VM $ComputerName -ScriptText 'Get-wmiObject -class win32_operatingsystem' -GuestCredential $GuestCredentials -ScriptType Powershell -ErrorAction Stop) {
+                                        return 'Pass'
+                                    } else { return 'Fail' }
+                                }
+                                catch { return 'Fail' }
+                            }
+                        }
+                    }
+                } elseif($server.$test -like "Fail x*") {
+                    $failcount = ($server.$test).Substring(5)
+                    switch($test) {
+                        "IP" {
+                            $vm = Get-VM $server.Server -ErrorAction SilentlyContinue
+                            write-debug "wtf"
+                            #Get the last IPv4 address
+                            if($vm) { $arglist = @($vm.Guest.IPAddress | Where-Object{$_ -notlike "*:*" -and $_ -notlike "169.*"} | Select-Object -Last 1) } 
+                            else { $arglist = @($null) }
+                            
+                            $rsscript = {
+                                param($ip)
+                                if($ip -ne $null) {
+                                    return $ip
+                                } else { return "Fail x$failcount" }
+                            }
+                        }
+                    }
+                }
+
+                #Start a runspace
+                if($rsscript -ne $null) {
+                    $server.$test = "Testing"
+                    Write-Verbose "[$($server.Server)] Starting $test test"
+                    Start-RSJob -Name "MV__$($server.Server)__$test" -ArgumentList $arglist -ScriptBlock $rsscript -Throttle 15 | Out-Null
+                    $i++
+                    if($i -ge $throttle) { break outer }
+                }
+            }
+        }
+        Start-Sleep -Milliseconds 250
+    }
+
+    if($ServerStatus -and $label) {
+        $serversclean = $servers | ForEach-Object{$_ -replace ".txt" -replace "\." -replace "\\"}
+        Export-Results -results $ServerStatus -exportName MigrationValidation_$($serversclean)_$label
+    }
+
+    if($mode -eq "Validation" -and $label -eq "6.0") {
+        Test-MigrationResults -servers $servers
+    }
+}
+
+function Get-VMGuestNetwork {
+    [cmdletbinding()]
+    param (
+        [Parameter(Mandatory=$true)][VMware.VimAutomation.Types.VirtualMachine]$VM,
+        [Parameter(Mandatory=$true)][string]$GuestUser,
+        [Parameter(Mandatory=$true)][string]$GuestPassword 
+    )
+
+    $vmoutput = Invoke-VMScript -ScriptText '(get-netipaddress | ?{$_.AddressFamily -eq "IPv4" -and $_.IPAddress -ne "127.0.0.1"} | Select InterfaceAlias,InterfaceIndex,IpAddress | ConvertTo-CSV)' `
+                -ScriptType Powershell -VM $vm -GuestUser $GuestUser -GuestPassword $GuestPassword
+
+    if($vmoutput.ExitCode -eq 0) {
+        #Write-Host "[$($vm.name)] Invoke-VMScript ran successfully"
+        $nics = @($vmoutput.ScriptOutput | ConvertFrom-Csv)
+        #Write-Host "[$($vm.name)] Found $($nics.count) NIC"
+        foreach($_n in $nics) {
+            Write-Host "[$($vm.name)] Interface=[$($_n.InterfaceAlias)] CurrentIP=[$($_n.IPAddress)]"
+        }
+        return $nics
+    } else {
+        Write-Host "[$($vm.name)] Invoke-VMScript returned Exit Code of $($vmoutput.ExitCode)"
+        Return
+    }
+}
+
+function Set-VMGuestNetwork {
+    [cmdletbinding()]
+    param (
+        [Parameter(Mandatory=$true)][VMware.VimAutomation.Types.VirtualMachine]$vm,
+        [Parameter(Mandatory=$true)][string]$GuestUser,
+        [Parameter(Mandatory=$true)][string]$GuestPassword,
+        [string]$nicAlias,
+        [string]$nicIP,
+        $nicMask,
+        $nicGateway
+    )
+    Write-Host "[$($vm.name)] Changing IP for interface $nicAlias to $nicIP"
+    $changingIp = '%WINDIR%\system32\netsh.exe interface ipv4 set address name="' + $nicAlias + '" source=static address=' + $nicIP + ' mask=' + $nicMask + ' gateway=' + $nicGateway + ' gwmetric=1 store=persistent'
+    $out = Invoke-VMScript -ScriptText $changingIp -ScriptType bat -VM ($vm.name) -GuestUser $GuestUser -GuestPassword $GuestPassword
+}
+
+function Start-DatastoreMigration {
+    [cmdletbinding()]
+    Param (
+        [Parameter(ParameterSetName="VM")]$SourceVM,
+        [Parameter(ParameterSetName="Datastore")]$SourceDatastore,
+        [Parameter(ParameterSetName="DatastoreCluster")]$SourceDatastoreCluster,
+        [Parameter(ParameterSetName="VMCluster")]$SourceVMCluster,
+        $DestinationDatastoreCluster,
+        $DestinationDatastore,
+        $transferlimit = 2000,
+        $svmotionlimit = 1
+    )
+
+    switch($PSCmdlet.ParameterSetName) {
+        "VM" {
+            Write-Verbose "Getting VM objects"
+            if($SourceVM.EndsWith(".txt")) { $SourceVM = Get-Content $SourceVM }
+            $vmsObj = $SourceVM | ForEach-Object{Get-VM $_}
+        }
+        "VMCluster" {
+            $allvms = Get-Cluster $SourceVMCluster | get-vm | Sort-Object name
+            $destdatastores = Get-DatastoreCluster $destcluster | get-datastore | Select-Object -expand Name | Sort-Object
+            $vmsondatastore = @()
+            foreach($d in $destdatastores) { $vmsondatastore += get-vm -Datastore $d }
+            $tomove = Compare-Object $allvms $vmsondatastore -PassThru
+            $tomovesize = ($tomove | Measure-Object -Sum -Property UsedSpaceGB).sum
+        }
+        "Datastore" {
+            if($SourceDatastore.EndsWith(".txt")) { $SourceDatastore = @(Get-Content $SourceDatastore) }
+            $vmsObj = Get-Datastore $SourceDatastore | Get-VM | Sort-Object Name
+        }
+        "DatastoreCluster" {
+            $vmsObj = Get-DatastoreCluster $SourceDatastoreCluster | Get-Datastore | Get-VM | Sort-Object Name
+        }
+    }
+
+    $disks = $vmsObj | Get-HardDisk
+    if($DestinationDatastoreCluster) { $dest = $DestinationDatastoreCluster }
+    elseif($DestinationDatastore) { $dest = $DestinationDatastore }
+    else { 
+        Write-Host "Destination required" 
+        Return
+    }
+
+    $vms = @()
+    foreach($_d in $disks) {
+        $dsName = $_d.FileName.Split(']')[0].TrimStart('[')
+        #If migrating from a SourceDatastore, only migrate VMDKs frpm the SourceDatastore
+        if($SourceDatastore) {
+            if($SourceDatastore -contains $dsName) {
+                Write-Verbose "Adding $($_d.Filename)"
+                $vms += $_d
+            } else {
+                Write-Verbose "Skipping $($_d.Filename)"
+            }
+        } else {
+            if($dsName -notlike "*Standard*") {
+                Write-Verbose "Adding $($_d.Filename)"
+                $vms += $_d
+            }
+        }
+    }
+               
+    Write-Verbose "Add smallests VMDKs to migrate"           
+    $tomove = @(); $tomovesize = 0
+    $vms = $vms | Sort-Object CapacityGB; $i = 0
+    while($tomovesize -lt $transferlimit -and $i -lt $vms.count) {
+        $smallvmdk = $vms[$i]
+        $smallvmdkused = $smallvmdk.CapacityGB
+        if(($smallvmdkused.CapacityGB + $tomovesize) -lt $transferlimit) { 
+            Write-Verbose "$($smallvmdk.filename): $smallvmdkused GB VMDK added to queue";
+            $vms = $vms | Where-Object{$_ -ne $smallvmdk}; $tomove += $smallvmdk
+        } else { break }
+        $tomovesize = ($tomove | Measure-Object -Sum -Property CapacityGB).sum; $i++
+    }
+
+    Write-Host "$("{0:N2}" -f $tomovesize) GB in $($tomove.count) VMDKs will be migrated $svmotionlimit at a time to $dest"
+    $tomove | Select-Object Parent,Filename,CapacityGB | Sort-Object Parent
+    $option = Read-Host "continue, exit"
+    switch($option) {
+        "continue" { }
+        "c" { }
+        "exit" { Exit }
+        default { Exit }
+    }
+
+    foreach($vm in $tomove) {
+        $success = $false
+        while($success -ne $true) {
+            $tasks = @(get-task -status Running | Where-Object{$_.name -like "*RelocateVM_Task*"})
+            if($tasks.count -lt $svmotionlimit) {
+                if($DestinationDatastoreCluster) {
+                    MoveVMDK -vmdk $vm -DestinationDatastoreCluster $dest
+                } elseif($DestinationDatastore) {
+                    MoveVMDK -vmdk $vm -DestinationDatastore $dest
+                }
+                $success = $true
+                Start-Sleep -Seconds 5
+            } else {
+                Write-Verbose "Sleeping for 15 seconds"
+                Start-Sleep -Seconds 15
+            }
+        }
+    }
+}
+
+function Move-VMConfig {
+    [cmdletbinding()]
+    param (
+        [Parameter(ValueFromPipeline=$true)][VMware.VimAutomation.Types.VirtualMachine]$VM,
+        $svMotionLimit = 1
+    )
+
+    process {
+        $disk1 = Get-HardDisk -VM $vm | Select-Object -First 1
+        $disk1ds = $disk1.FileName.Split(']')[0].TrimStart('[')
+        $destinationds = Get-Datastore -Name $disk1ds
+
+        $spec = New-Object VMware.Vim.VirtualMachineRelocateSpec
+        $spec.Datastore = $destinationds.Extensiondata.Moref
+
+        $vm_vmx = ($vm.ExtensionData.LayoutEx.File | Where-Object{$_.Name -like "*.vmx"}).Name
+        $vm_vmx_ds = $vm_vmx.Split(']')[0].TrimStart('[')
+        if($vm_vmx_ds -ne $disk1ds) {
+            $moveNeeded = $true
+        } else {
+            Write-Host "[$($vm.Name)] Configuration files already on $disk1ds"
+            $moveNeeded = $false
+        }
+
+        while($moveNeeded) {
+            $tasks = @(get-task -status Running | Where-Object{$_.name -like "*RelocateVM_Task*"})
+            if($tasks.count -lt $svMotionLimit) {
+                Write-Host "[$($vm.Name)] svMotioning configuration files to $disk1ds"
+                $vm.ExtensionData.RelocateVM_Task($spec, "defaultPriority") | Out-Null
+                Start-Sleep -Seconds 5
+                return
+            } else {
+                Write-Verbose "Sleeping for 15 seconds"
+                Start-Sleep -Seconds 15
+            }
+        }
+    }
+}
+
+function Get-VMDisks {
+    [cmdletbinding()]
+    param (
+        [Parameter(ValueFromPipeline=$true)][VMware.VimAutomation.Types.VirtualMachine]$VM
+    )
+
+    process {
+        $VMView = Get-View -VIObject $vm
+
+        $results = @()
+        ForEach ($VirtualSCSIController in ($VMView.Config.Hardware.Device | Where-Object {$_.DeviceInfo.Label -match "SCSI Controller"})) {
+            ForEach ($VirtualDiskDevice  in ($VMView.Config.Hardware.Device | Where-Object {$_.ControllerKey -eq $VirtualSCSIController.Key})) {
+                $results += [pscustomobject][ordered]@{
+                    VM = $VM.Name
+                    HostName = $VMView.Guest.HostName
+                    PowerState = $VM.PowerState
+                    DiskFile = $VirtualDiskDevice.Backing.FileName
+                    DiskName = $VirtualDiskDevice.DeviceInfo.Label
+                    DiskSize = $VirtualDiskDevice.CapacityInKB * 1KB
+                    BusNumber = $VirtualSCSIController.BusNumber
+                    UnitNumber = $VirtualDiskDevice.UnitNumber
+                }
+            }
+        }
+        $results
+    }
+}
+
+function Expand-VMDisk {
+    <#
+    .Example
+    Get-VM VMName | Get-HardDisk | Select-Object -Last 1 | Expand-VMDisk
+    #>
+    [cmdletbinding()]
+    param (
+        [Parameter(ValueFromPipeline=$true)]$HardDisk,
+        $expandScript = "C:\Scripts\GuestDiskExpansion_Windows2012-part1.ps1",
+        $expandScriptCustom = "C:\Scripts\GuestDiskExpansion_Windows2012_Custom.ps1"
+    )
+
+    begin {
+        $cred = Get-SecureStringCredentials -Username "DOMAIN\Username -Credentials
+        $localcred = Get-SecureStringCredentials -Username "Administrator" -Credentials
+        $localpass = Get-SecureStringCredentials -Username "Admin" -PlainPassword
+    }
+
+    process {
+        $vm = Get-VM -Name $HardDisk.Parent
+        $vmdisk = @(Get-VMDisks -VM $vm | Where-Object{$_.DiskFile -eq $HardDisk.Filename})
+        if($vmdisk.count -eq 1) {
+            Write-Host "[$($vmdisk.BusNumber):$($vmdisk.UnitNumber)] Disk filename is $($HardDisk.Filename)"
+
+            #Customize expand script and output to file
+            $script1 = Get-Content $expandScript -Raw | ForEach-Object{ $_ -replace "BUSSCSI",$vmdisk.BusNumber -replace "TARGETSCSI",$vmdisk.UnitNumber } #| Out-File $expandScriptCustom
+            $script1
+
+            #Copy customized expand script to VM
+            #Copy-VMGuestFile -LocalToGuest -Source $expandScriptCustom -Destination C:\temp\GuestDiskExpansion.ps1 -VM $($vm.name) -Force # -GuestCredential $localcred -HostCredential $cred
+
+            #Run custuomized expand script on VM
+            #$credxml = Import-Clixml
+            #$testscript = "$testcred = (New-Object -TypeName System.Management.Automation.PSCredential -argumentlist admin,($pass_string | ConvertTo-SecureString));Start-Process powershell -ArgumentList '-noprofile -noninteractive -command C:\temp\GuestDiskExpansion.ps1'"
+            #$testscript = "C:\temp\GuestDiskExpansion.ps1"
+            Invoke-VMScript -VM $vm -ScriptText $script1 -GuestUser "admin" -GuestPassword $localpass -ScriptType Powershell #| Select-Object -ExpandProperty ScriptOutput
+        }
+    }
+}
+
+function Invoke-DisableDeleteCoredumpFile {
+    $vmhosts = get-vmhost
+
+    foreach($vmhost in $vmhosts) {
+        Write-Host "[$($vmhost.Name)] Disabling & deleting coredump file"
+        $esxcli = Get-EsxCli -VMHost $vmhost -V2
+    
+
+        $esxargs = $esxcli.system.coredump.file.set.CreateArgs()
+        $esxargs.enable = $false
+        $esxcli.system.coredump.file.set.Invoke($esxargs)
+
+        $esxargs = $esxcli.system.coredump.file.remove.CreateArgs()
+        $esxargs.force = $true
+        $esxcli.system.coredump.file.remove.Invoke($esxargs)
+    }
+}
+
+function Get-VMHostAdvancedSetting {
+    [cmdletbinding()]
+    param(
+        [Parameter(Mandatory=$true,ValueFromPipeline=$true)][VMware.VimAutomation.Types.VMHost]$VMHost,
+        [Parameter(Mandatory=$true)]$Name
+    )
+
+    process {
+        Get-AdvancedSetting -Entity $VMHost -Name $Name | Select-Object Entity,Name,Value
+    }
+}
+
+function Set-VMHostAdvancedSetting {
+    [cmdletbinding()]
+    param(
+        [Parameter(Mandatory=$true,ValueFromPipeline=$true)][VMware.VimAutomation.Types.VMHost]$VMHost,
+        [Parameter(Mandatory=$true)]$Name,
+        [Parameter(Mandatory=$true)]$Value
+    )
+
+    process {
+        $setting = Get-AdvancedSetting -Entity $VMHost -Name $Name
+
+        if($setting.Value -ne $Value) {
+            Write-Host "[$($VMHost.Name)] Setting $Name to $value"
+            Set-AdvancedSetting -AdvancedSetting $setting -Value $Value -Confirm:$false
+        } else {
+            Write-Host "[$($VMHost.Name)] $Name already set to $value" -ForegroundColor Green
+        }
+    }
+}
+
+$esxi_hardening = @{
+    "UserVars.ESXiShellInteractiveTimeOut" = 900
+    "UserVars.ESXiShellTimeOut" = 900
+    "Security.AccountUnlockTime" = 900
+    "Security.AccountLockFailures" = 3
+    "Security.PasswordQualityControl" = "retry=3 min=disabled,disabled,disabled,8,8"
+}
+
+function Get-VMHostHardening {
+    [cmdletbinding()]
+    param(
+        [Parameter(Mandatory=$true,ValueFromPipeline=$true)][VMware.VimAutomation.Types.VMHost]$VMHost
+    )
+
+    process {
+        foreach($key in $esxi_hardening.Keys) {
+            $value = $esxi_hardening.Item($key)
+            $current = Get-VMHostAdvancedSetting -VMHost $VMHost -Name $key
+            if($current.Value -eq $value) {
+                Write-Host "[$($VMHost.Name)] '$key' already set to $value" -ForegroundColor Green
+            } else {
+                Write-Host "[$($VMHost.Name)] '$key' doesn't match $value" -ForegroundColor Red
+            }
+        }
+    }
+}
+
+function Set-VMHostHardening {
+    [cmdletbinding()]
+    param(
+        [Parameter(Mandatory=$true,ValueFromPipeline=$true)][VMware.VimAutomation.Types.VMHost]$VMHost
+    )
+
+    process {
+        foreach($key in $esxi_hardening.Keys) {
+            $value = $esxi_hardening.Item($key)
+            Set-VMHostAdvancedSetting -VMHost $VMHost -Name $key -value $value
+        }
+    }
+}
+
+function Measure-VMHostDatastores {
+    [cmdletbinding()]
+    param (
+        [Parameter(Mandatory=$true,ValueFromPipeline=$true)][VMware.VimAutomation.Types.VMHost]$VMHost
+    )
+
+    process {
+        $datastores = $vmhost | Get-Datastore
+
+        $VMHost | Select-Object Name,@{Name="Datastores";Expression={$datastores.Count}}
+    }
+}
+
+function Test-SRMRecoveryPlan {
+    [cmdletbinding()]
+    param (
+        $RecoveryPlan = "RP_SRM_Testing"
+        
+    )
+
+    #connect to srm
+    $srm = Connect-SrmServer
+    $srmapi = $srm.ExtensionData
+
+    #find the recovery plan
+    $RecoveryPlans = $srmapi.Recovery.ListPlans()
+    foreach($_rp in $RecoveryPlans) {
+        $rp_info = $_rp.GetInfo()
+        if($rp_info.Name -eq $RecoveryPlan) {
+            $rp = $_rp
+            break
+        }
+    }
+
+    Write-Host "$RecoveryPlan found at $($rp.moref)"
+
+    #if the status is not ready, abort
+    if($rp_info.State -eq "Protecting") {
+        Write-Host "Recovery Plan testing needs to be initiated from the other SRM instance. Aborting" -ForegroundColor Red
+        Return
+    } elseif($rp_info.State -ne "Ready") {
+        Write-Host "Recovery plan is '$($rp_info.State)' instead 'Ready.' Aborting" -ForegroundColor Red
+        Return
+    }
+
+    #ask for confirmation, then start testing
+    Read-Host "Recovery Plan is Ready. Press Enter to start Testing"
+    [VMware.VimAutomation.Srm.Views.SrmRecoveryPlanRecoveryMode] $RecoveryMode = 'Test'
+    $rp.Start($RecoveryMode)
+    $rp_info = $rp.GetInfo()
+
+    #wait for testing to finish
+    while($rp_info.State -ne "NeedsCleanup") {
+        Write-Host "Recovery Plan Test is '$($rp_info.State)'..."
+        Start-Sleep -Seconds 10
+        $rp_info = $rp.GetInfo()
+    }
+
+    #report test status
+    Write-Host "Recovery Plan Test completed"
+    $test_results = ($srmapi.Recovery.GetHistory($rp.Moref)).GetRecoveryResult(1)
+    $test_results
+
+    #ask for confirmation, then start test cleanup
+    Read-Host "Press Enter to start Cleanup"
+
+    #start cleanup
+    [VMware.VimAutomation.Srm.Views.SrmRecoveryPlanRecoveryMode] $RecoveryMode = 'Cleanup'
+    $rp.Start($RecoveryMode)
+    $rp_info = $rp.GetInfo()
+
+    #wait for cleanup to finish
+    while($rp_info.State -ne "Ready") {
+        Write-Host "Recovery Plan Cleanup is '$($rp_info.State)'..."
+        Start-Sleep -Seconds 10
+        $rp_info = $rp.GetInfo()
+    }
+
+    Write-Host "Recovery Plan Test Cleanup completed"
+    $cleanup_results = ($srmapi.Recovery.GetHistory($rp.Moref)).GetRecoveryResult(1)
+    $cleanup_results
+
+    #email results. tbd
+}
+
+function New-SRMAlarms {
+    [cmdletbinding()]
+    param (
+        $AlarmCSV = ".\srm-alarms.csv"
+    )
+
+    $alarms = Import-Csv $AlarmCSV
+
+    foreach($_a in $alarms) {
+
+    }
+}
+
+function Get-StoragePaths {
+    $results = @()
+    foreach($cluster in get-cluster | Sort-Object Name) {
+        foreach($vmhost in ($cluster | Get-VMHost  | Sort-Object Name)) {
+            foreach($hba in (Get-VMHostHba -VMHost $vmhost -Type "FibreChannel" | Sort-Object Device)){
+                 $target = ((Get-View $hba.VMhost).Config.StorageDevice.ScsiTopology.Adapter | Where-Object {$_.Adapter -eq $hba.Key}).Target
+                 $luns = @(Get-ScsiLun -Hba $hba  -LunType "disk" -ErrorAction SilentlyContinue)
+                 $nrPaths = ($target | ForEach-Object{$_.Lun.Count} | Measure-Object -Sum).Sum
+                 if($target.count -ne 0) {
+                    Write-Host $vmhost.Name $hba.Device "Targets:" $target.Count "Devices:" $luns.Count "Paths:" $nrPaths
+                    $results += [pscustomobject][ordered]@{
+                        Cluster = $cluster.Name
+                        VMHost = $vmhost.Name
+                        HBA = $hba.Device
+                        Targets = $target.Count
+                        Devices = $luns.Count
+                        Paths = $nrPaths
+                    }
+                 }
+            }
+        }
+    }
+
+    Export-Results -results $results -exportName StoragePaths
+}
+
+function Invoke-FindVM {
+    [cmdletbinding()]
+    param (
+        $ComputerNamesFile = ".\not-accounted.txt"
+    )
+
+    $ComputerNames = Get-Content $ComputerNamesFile
+    $results = @()
+
+    foreach($_c in $ComputerNames) {
+        $vm = $null
+        $cluster = "N/A"
+        try { 
+            $vm = Get-VM -Name $_c -ErrorAction Stop
+            $vm_exists = "Yes"
         }
         catch {
-            Write-Host "[$_name] Failed to enable/disable forcing entry to BIOS on next startup"
-            $_name | Out-File bad_vmx.txt -Append
+            $vm_exists = "No"
+        }
+
+        if($vm -ne $null) {
+            try {
+                $cluster = $vm | Get-Cluster -ErrorAction Stop | Select-Object -ExpandProperty Name
+            }
+            catch {
+                $cluster = "Not Found"
+            }
+        }
+
+        Write-Host "[$_c] Exists=$vm_exists Cluster=$cluster"
+
+        $results += [pscustomobject][ordered]@{
+            VM = $_c
+            Exists = $vm_exists
+            Cluster = $cluster
+        }
+    }
+
+    $results
+    Export-Results -results $results -exportName FindVM
+}
+
+function Set-VMHostLogDir {
+    foreach($_v in (get-vmhost | Sort-Object Name)) {
+        $template_ds = $null
+        $ds = get-datastore -vmhost $_v
+        $template_ds = $ds | Where-Object{$_.name -like "*template*"}
+        if($template_ds -ne $null) {
+            $shortname = $_v.name.Split(".")[0]
+            $logdir = "[$($template_ds.name)] scratch/logs/.locker-$shortname"
+
+            $setting = Get-AdvancedSetting -Entity $_v -Name syslog.global.logdir
+            if($setting.Value -ne $logdir) {
+                Write-Host "[$shortname] setting syslog.global.logdir to $logdir"
+                Set-AdvancedSetting -AdvancedSetting $setting -Value $logdir -Confirm:$false
+            } else {
+                Write-Host "[$shortname] syslog.global.logdir already set to $logdir"
+            }
+        }
+    }
+}
+
+function Get-VMToolsHWStatus() {
+    [cmdletbinding()]
+    param (
+        [switch]$export = $false
+    )
+
+    $results = @()
+    $clusters = Get-Cluster | Sort-Object Name
+    foreach($_c in $clusters) {
+        $vc = Get-vCenterFromUID -uid $_c.Uid
+        $views = Get-view -Server $vc -ViewType VirtualMachine -Property Name,Summary,Config,Guest,Parent -SearchRoot $_c.ExtensionData.MoRef
+        $folders = Get-View -Server $vc -ViewType Folder -Property Name
+
+        foreach($_v in $views) {
+            $results += [pscustomobject][ordered]@{
+                Name = $_v.Name
+                PowerState = $_v.Summary.Runtime.PowerState
+                vCenter = $vc
+                Cluster = $_c.Name
+                Folder = $folders | ?{$_.MoRef -eq $_v.Parent} | Select-Object -ExpandProperty Name
+                GuestOS = $_v.Config.GuestFullName
+                HWVersion = $_v.Config.Version
+                ToolsVersion = SwitchGuestToolsVersion($_v.Guest.ToolsVersion)
+                ToolsStatus = $_v.Guest.ToolsStatus
+            }
+        }
+    }
+    
+    Write-Output $results 
+    if($export) { Export-Results -results $results -exportName VM_HWTools_Status -excel }
+}
+
+function Invoke-VMToolsHardwareUpdate() {
+    <#
+    .PREREQUISITIES
+    Assign a VMware Tools and VM Hardware Baseline in VM and Templates view
+    Connect to vCenter with Connect-VIServer
+    VMs must be Powered On
+
+    .HOWTOUSE
+    
+    .MANUAL ACTIONS
+    1. Find VM in VUM
+    2. Scan for Updates
+    3. Remediate VMware Tools. Wait
+    4. Remediate Hardware Version. Wait
+    5. Validate updated VMware Tools Version and Hardware Version
+    6. Delete snapshots
+    Number of VMs to Update x 6
+    
+    .POWERSHELL ACTIONS
+    1. Run Invoke-VMToolsHardwareUpdate. Wait for prep
+    2. Type 'go'
+    3. Type 'cleanup'
+    #>
+    [cmdletbinding()]
+    param (
+        $Servers = "tools_testing.txt",
+        $SecondsAfterToolsInstall = 30,
+        $toolsBaseline = "VMware Tools Upgrade to Match Host (Predefined)",
+        $hardwareBaseline = "VM Hardware Upgrade to Match Host (Predefined)"
+    )
+
+    #todo:
+    #testing on 3 vms
+    #error handling
+
+    #read list of vms from file
+    if($Servers.EndsWith(".txt")) { 
+        $serverlist = @(Get-Content $Servers) 
+    } else { $serverlist = @($Servers) }
+
+    #foreach vm
+    $ServerStatus = @()
+    foreach($_s in $serverlist) {
+        #set state to 'toolsCheck'
+        $ServerStatus += [pscustomobject][ordered]@{
+            VM = $_s
+            State = "prep"
+            Message = $null
+            ToolsVersion = "Unknown"
+            ToolsStatus = "Unknown"
+            ToolsCompletedTime = $null
+            HardwareVersion = "Unknown"
+            HardwareCompletedTime = $null
+            TaskID = $null
+        }
+    }
+
+    $mode = "Testing"
+    $refreshneeded = $true
+    while($mode -ne "Validation") {
+        if($refreshneeded) {
+            Clear-Host
+            $ServerStatus | Select-Object VM,State,Message,ToolsVersion,ToolsStatus,HardwareVersion | Format-Table -AutoSize | Out-String | ColorWord2 -word 'Success','Failed' -color 'Green','Red'
+        }
+
+        $completed = @($ServerStatus | Where-Object{$_.State -match "(Success|Error)"})
+        if($completed.Count -eq $ServerStatus.count) {
+            $successful = @($ServerStatus | Where-Object{$_.State -eq "Success"})
+
+            $option = Read-Host "Type 'cleanup' delete all snapshots on the $($successful.count) successful VMs"
+            switch($option) {
+                "cleanup" {
+                    $successful | %{ Get-VM $_.VM | Get-Snapshot | Remove-Snapshot -Confirm:$false -RunAsync}
+                    Write-Host "Delete snapshot placeholder"; Return 
+                }
+                default { return }
+            }
+        }
+
+        $lastServerStatus = $ServerStatus
+        foreach($_s in $ServerStatus) {
+            $vm = $null
+            $Name = $_s.VM
+            switch($_s.State) {
+                "prep" {
+                    $_s.Message = "Getting state"
+                    $view = Get-View -ViewType VirtualMachine -Filter @{"Name"=$Name} -Property Name,Guest,Config,Runtime,Snapshot
+                    $ToolsStatus = $view.Guest.ToolsStatus
+                    $ToolsVersion = SwitchGuestToolsVersion($view.Config.Tools.ToolsVersion)
+
+                    $_s.HardwareVersion = $view.Config.Version
+                    $_s.ToolsStatus = $ToolsStatus
+                    $_s.ToolsVersion = $ToolsVersion
+                    $_s.Message = ""
+                    if($view.Runtime.Powerstate -eq "poweredOn") {
+                        if($view.Snapshot -eq $null) {
+                            $_s.State = "ready"
+                        } else {
+                            $_s.State = "errorSnapshot"
+                            $_s.Message = "VM already has snapshot"
+                        }
+                    } elseif($view.Runtime.PowerState -eq "poweredOff") {
+                        $_s.State = "errorPower"
+                        $_s.Message = "Must be Powered On"
+                    }
+                    break
+                }
+
+                "ready" {
+                    $ready = @($ServerStatus | Where-Object{$_.State -eq "ready"})
+                    if($ready.Count -eq $ServerStatus.count) {
+                        $option = Read-Host "Type 'go' to update VMware Tools and Hardware Version on $($ServerStatus.count) VMs"
+                        switch($option) {
+                            "go" { $ServerStatus | %{ $_.State = "toolsCheck" } }
+                            default { return }
+                        }
+                    }
+                    break
+                }
+
+                "toolsCheck" {                   
+                    $_s.Message = "Checking Tools Compliance"
+                    $vm = get-vm $Name
+                    $baseline = Get-Baseline -Name $toolsBaseline
+
+                    #scan for updates. wait
+                    Scan-Inventory -Entity $vm -UpdateType VmToolsUpgrade
+
+                    #get the compliance state for tools
+                    $compliance = Get-Compliance -Entity $vm -Baseline $baseline | Select-Object -ExpandProperty Status
+                    switch($compliance) {
+                        #set state to toolsNeeded or toolsCompliant or toolsFailed(if previous install failed)
+                        "NotCompliant" {
+                            $_s.Message = "Tools not compliant"
+                            $_s.State = "toolsNeeded"
+                        }
+                        "Compliant" {
+                            $_s.Message = "Tools compliant"
+                            $_s.State = "toolsCompliant"
+                        }
+                        default { Write-Host "something broke"; Return }
+                    }
+                    break
+                }
+
+                "toolsNeeded" {
+                    $_s.Message = "Starting Tools update"
+                    $vm = get-vm $Name
+                    $baseline = Get-Baseline -Name $toolsBaseline
+
+                    #invoke tools remediation
+                    $task = Remediate-Inventory -Entity $vm -Baseline $baseline -GuestCreateSnapshot:$true -RunAsync -Confirm:$false
+                    #set state to toolsInstalling
+                    $_s.TaskID = $task.ID
+                    $_s.State = "toolsUpdating"
+                    break
+                }
+
+                "toolsUpdating" {
+                    #wait for remediation to complete then set state to toolsCheck
+                    $task = Get-Task -Id $_s.TaskID
+                    if($task.State -eq "Running") {
+                        $_s.Message = "Waiting for Tools update"
+                    } elseif($task.State -eq "Error") {
+                        $_s.Message = "Tools update failed"
+                        $_s.State = "Error"
+                    } elseif($task.State -eq "Success") {
+                        $_s.Message = "Tools updated"
+                        $_s.State = "toolsCheck"
+                    }
+                    break
+                }
+
+                "toolsCompliant" {
+                    $_s.Message = "Validating Tools"
+                    #get the tools status and tools version
+                    $view = Get-View -ViewType VirtualMachine -Filter @{"Name"=$Name} -Property Name,Guest
+                    $ToolsStatus = $view.Guest.ToolsStatus
+                    $ToolsVersion = SwitchGuestToolsVersion($view.Guest.ToolsVersion)
+
+                    #if tools status is Running and tools version is 10.0.6, set state to hardwareCheck
+                    Write-Verbose "[$Name] VMware Tools is '$ToolsStatus' on version '$ToolsVersion'"
+                    $_s.ToolsStatus = $ToolsStatus
+                    $_s.ToolsVersion = $ToolsVersion
+
+
+                    if($ToolsStatus -eq "toolsOK" -and $ToolsVersion -eq "10.0.6") {
+                        $_s.State = "hardwareCheck"
+                        $_s.ToolsCompletedTime = Get-Date
+                    }
+                    break
+                }
+
+                "hardwareCheck" {
+                    #wait for 60 seconds after tools installation
+                    $secondsSinceToolsCompleted = (((Get-Date) - ($_s.ToolsCompletedTime)).TotalSeconds)
+
+                    if($secondsSinceToolsCompleted -gt $SecondsAfterToolsInstall) {
+                        $_s.Message = "Checking Hardware Compliance"
+                        $vm = get-vm $Name
+                        $baseline = Get-Baseline -Name $hardwareBaseline
+
+                        #scan for updates. wait
+                        Scan-Inventory -Entity $vm -UpdateType VmHardwareUpgrade
+
+                        #get the compliance state for hardware
+                        $compliance = Get-Compliance -Entity $vm -Baseline $baseline | select -ExpandProperty Status
+
+                        switch($compliance) {
+                            #set the state to hardwareNeeded or hardwareCompliant or hardwareFailed(if previous install failed)
+                            "NotCompliant" {
+                                $_s.Message = "Hardware is not compliant"
+                                $_s.State = "hardwareNeeded"
+                            }
+                            "Compliant" {
+                                $_s.Message = "Hardware is compliant"
+                                $_s.State = "hardwareCompliant"
+                            }
+                            default { Write-Host "something broke"; Return }
+                        }
+
+                    } else {
+                        $_s.Message = "Waiting for $("{0:N0}" -f $secondsSinceToolsCompleted)/$SecondsAfterToolsInstall seconds"
+                    }
+                    break
+                }
+
+                "hardwareNeeded" {
+                    $_s.Message = "Starting Hardware update"
+                    $vm = get-vm $Name
+                    $baseline = Get-Baseline -Name $hardwareBaseline
+
+                    #invoke hardware remediation
+                    $task = Remediate-Inventory -Entity $vm -Baseline $baseline -GuestCreateSnapshot:$true -RunAsync -Confirm:$false
+                    #set state to hardwareInstalling
+                    $_s.TaskID = $task.ID
+                    $_s.State = "hardwareUpdating"
+                    break
+                }
+
+                "hardwareUpdating" {
+                    #wait for remediation to complete then set state to toolsCheck
+                    $task = Get-Task -Id $_s.TaskID
+                    if($task.State -eq "Running") {
+                        $_s.Message = "Waiting for Hardware update"
+                    } elseif($task.State -eq "Error") {
+                        $_s.Message = "Hardware update failed"
+                        $_s.State = "Error"
+                    } elseif($task.State -eq "Success") {
+                        $_s.Message = "Hardware updated"
+                        $_s.State = "hardwareCheck"
+                    }
+                    break
+                }
+
+                "hardwareCompliant" {
+                    #get the hardware version
+                    $_s.Message = "Validating Hardware"
+                    $view = Get-View -ViewType VirtualMachine -Filter @{"Name"=$Name} -Property Name,Config
+                    $_s.HardwareVersion = $view.Config.Version
+                    if($_s.HardwareVersion -eq "vmx-11") {
+                        $_s.State = "Success"
+                        $_s.Message = ""
+                    } else {
+                        $_s.State = "Error"
+                        $_s.Message = "Not on Hardware Version 11"
+                    }
+                }
+
+                default { }
+            }
+            Start-Sleep -Milliseconds 1000
+        }
+
+        if($lastServerStatus -ne $ServerStatus) {
+            $refreshneeded = $true
+        } else {
+            $refreshneeded = $false
         }
     }
 }
