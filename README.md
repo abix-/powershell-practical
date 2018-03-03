@@ -16,7 +16,7 @@ The 146 functions in Aluminium allow me to increase efficiency and minimize mund
 * **Start-ClusterCapacityReport**: creates a Cluster Capacity HTML Report on vCPU/vRAM allocation, usage, availability, and contention for each Cluster. HTML report has separate tabs for each Cluster. Requires ImportExcel and ReportHTML modules. Connects to vROPs with REST. Requires CPU contention report in vROPs<br>
 * **Start-ClusterCapacitySummary**: creates a Cluster Capacity XLSX Summary on CPU/vRAM allocation, usage, availability, and contention for each Cluster. CPU Usage is calculated for 9AM to 5PM and 5PM to 9AM. Requires ImportExcel and ReportHTML modules. Connects to vROPs with REST. Requires CPU contention report in vROPs<br>
 * **Start-DatastoreMigration**: migrates VMs from a source Datastore/DatastoreCluster/MigrationGroup to a destination DatastoreCluster. Supports FillDatastorePercent to limit how full each datastore gets. Defaults to two svMotions at a time. Has been used to migrate 500TB+ between arrays.<br>
-* **Test-ESXiAccount**: validates that assumed credentials are valid on VMHosts<br.
+* **Test-ESXiAccount**: validates that assumed credentials are valid on VMHosts<br>
 
 ## Random Scripts
 These random scripts were written before I learned about PowerShell Modules. I haven't needed them in a few years and the ones I still use have been moved into the Aluminium module.
