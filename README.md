@@ -6,7 +6,7 @@ The 146 functions in Aluminium allow me to increase efficiency and minimize mund
 * **Get-HPOAInventory**: connects to a HP Onboard Administrator, discovers all linked enclosures, then creates a CSV report of identified hardware<br>
 * **Get-VMDatastoreDetails**: creates detailed report for all VMDKs for a list of VMs<br>
 * **Get-NTP_Health**: reports on VMHost time dift by using ConfigManager.DateTimeSystem to get time on VMHosts and comparing to local time<br>
-* **Invoke-DefragDatastoreCluster**: shuffle VMDKs between datastores on datastore cluster to optimally fill each datastore to 83%. Results in continguous free space<br>
+* **Invoke-DefragDatastoreCluster**: shuffle VMDKs between datastores in datastore cluster to optimally fill each datastore to 83%. Results in continguous free space<br>
 * **Move-VMConfig**: migrates a VM's configuration files(VMX, nvram, etc) to the same datastore as Hard Disk 1. Useful during SAN/datastore migrations<br>
 * **Move-VMtovCenter**: migrates a VM between vCenters by unregistering a VM from a Source vCenter, registering it on a destination vCenter, updating the NIC network labels, and powering on the VM. Tested between vCenter 5.1U3 and vCenter and 6.0U1<br>
 * **New-VMHost**: work in progress to accelerate ESXi VM Host build times. Modifies ILO users, creates custom ESXi ISO, performs install post-configuration<br>
