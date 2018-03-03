@@ -2,7 +2,7 @@ This repository contains random scripts and a PowerShell/PowerCLI module named A
 
 ## Aluminium
 The 146 functions in Aluminium allow me to increase efficiency and minimize mundane efforts. Here are a few examples:<br>
-* **Connect-SSHPutty**: starts SSH service on VMHost, launches Putty with credentials, and stops SSH service when Putty is closed
+* **Connect-SSHPutty**: starts SSH service on VMHost, launches Putty with credentials, then stops SSH service when Putty is closed
 * **Get-HBAHostFirmware**: get NIC driver and FCoE driver/firmware version for VMHosts<br>
 * **Get-HPOAInventory**: connects to a HP Onboard Administrator, discovers all linked enclosures, then creates a CSV report of identified hardware<br>
 * **Get-VMDatastoreDetails**: creates detailed report for all VMDKs for a list of VMs<br>
