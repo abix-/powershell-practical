@@ -22,7 +22,7 @@ The 146 functions in Aluminium allow me to increase efficiency and minimize mund
 These random scripts were written before I learned about PowerShell Modules. I haven't needed them in a few years and the ones I still use have been moved into the Aluminium module.
 
 ## Why?
-I intend for this respository to be a reference for the next person with a puzzle. I highly recommendy searching GitHub for a PowerShell cmdlet then checking the Code results. Uncommented code examples are much better than no code examples.
+I intend for this respository to be a reference for the next person with a puzzle. I highly recommend searching GitHub for a PowerShell cmdlet then checking the Code results. Uncommented code examples are much better than no code examples.
 
 ## Next
 * Add comments
