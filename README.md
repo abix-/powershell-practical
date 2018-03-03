@@ -19,7 +19,7 @@ The 146 functions in Aluminium allow me to increase efficiency and minimize mund
 * **Start-DatastoreMigration**: migrates VMs from a source Datastore/DatastoreCluster/MigrationGroup to a destination DatastoreCluster. Supports FillDatastorePercent to limit how full each datastore gets. Defaults to two svMotions at a time. Has been used to migrate 500TB+ between storage arrays<br>
 * **Start-ILO**: reads the output from Get-HPOAInventory to quickly launch Internet Explorer for ILO IP
 * **Test-ESXiAccount**: validates that assumed credentials are valid on VMHosts<br>
-* **Test-VMHostIODevice**:: uses output from Get-VMHostIODevice to compare IO devices(FCoE and Network) and validate that driver/firmware are at the expected revision
+* **Test-VMHostIODevice**: uses output from Get-VMHostIODevice to compare IO devices(FCoE and Network) and validate that driver/firmware are at the expected revision
 
 ## Random Scripts
 These random scripts were written before I learned about PowerShell Modules. I haven't needed them in a few years and the ones I still use have been moved into the Aluminium module.
