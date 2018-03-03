@@ -26,4 +26,4 @@ My intention is for this respository to be a reference for the next guy who come
 * Add explanations about the puzzles and constraints
 * Commit useless snippets
 
-This will never be complete but will always be fun.
+This will never be complete but will always be fun
