@@ -32,4 +32,4 @@ This respository is a reference for the next person with a puzzle. I highly reco
 * Add explanations about the puzzles and constraints
 * Commit useless snippets
 
-This will never be complete but will always be fun
+This will never be complete and will always be fun
