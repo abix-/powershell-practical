@@ -2,12 +2,12 @@ This repository contains random scripts and my Aluminium PowerShell module. Each
 
 ## Aluminium
 The 146 functions in Aluminium increase efficiency, minimize mundane, and create reports. Most functions require PowerCLI, ImportExcel, ReportHTML, PoshRSJob, or HP Scripting Tools modules. A few examples:<br>
-* **Connect-SSHPutty**: starts SSH service on VMHost, launches Putty with credentials, then stops SSH service when Putty is closed
-* **Get-HBAHostFirmware**: get VMHost NIC driver and FCoE driver/firmware version<br>
+* **Connect-SSHPutty**: uses Start-VMHostService, launches Putty with credentials, then Stop-VMHostService when Putty is closed
+* **Get-HBAFirmware**: gets VMHost NIC driver and FCoE driver/firmware version with Get-EsxCLI<br>
 * **Get-HPOAInventory**: connects to a HP Onboard Administrator, discovers all linked enclosures, then creates a CSV report of identified hardware<br>
-* **Get-VMDatastoreDetails**: creates detailed report for all VMDKs for a list of VMs<br>
-* **Get-NTP_Health**: reports on VMHost time dift by using ConfigManager.DateTimeSystem to get time on VMHosts and comparing to local time<br>
-* **Invoke-DefragDatastoreCluster**: shuffle VMDKs between datastores in datastore cluster to optimally fill each datastore to 83%. Results in continguous free space<br>
+* **Get-VMDatastoreDetails**: creates detailed report for all VMDKs for multiple VMs with Get-View<br>
+* **Get-NTP_Health**: reports on VMHost time dift by using ExtensionData.ConfigManager.DateTimeSystem to get time on VMHosts and comparing to local time<br>
+* **Invoke-DefragDatastoreCluster**: shuffle VMDKs with Move-HardDisk between datastores in datastore cluster to optimally fill each datastore to 83%. Results in continguous free space<br>
 * **Move-VMConfig**: migrates a VM's configuration files(VMX, nvram, etc) to the same datastore as Hard Disk 1. Useful during SAN/datastore migrations<br>
 * **Move-VMtovCenter**: migrates a VM between vCenters by unregistering a VM from a Source vCenter, registering it on a destination vCenter, updating the NIC network labels, and powering on the VM. Tested between vCenter 5.1U3 and vCenter 6.0U1<br>
 * **New-VMHost**: work in progress. accelerates ESXi VMHost build times. Modifies ILO users, creates custom ESXi ISO, adds vMotion IP, sets NTP, configures persistent logging, and changes advanced settings<br>
