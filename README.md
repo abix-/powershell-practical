@@ -20,7 +20,7 @@ The 146 functions increase efficiency, minimize mundane, and create reports. Mos
 * **Start-ILO**: reads the output from Get-HPOAInventory to quickly Start-Process Internet Explorer for ILO IP
 * **Test-ESXiAccount**: validates that assumed credentials are valid on VMHosts with Connect-VIServer<br>
 * **Test-PortGroups**: validates the trunking on VMHosts by moving a VM between every PortGroup on a VMHost. Will Set-VMGuestNetwork with an IP(based on PortGroup name) for each PortGroup then ping with Test-Connection and finally set the next PortGroup with Set-NetworkAdapter. The cycle repeats until all PortGroups have been tested. A ping failure likely indicates a trunking/networking misconfiguration
-* **Test-VMHostIODevice**: uses output from Get-VMHostIODevice to validate that driver/firmware for FCoE and Network devices are at assumed revision
+* **Test-VMHostIODevice**: uses output from Get-VMHostIODevice to validate that driver/firmware for FCoE and Network devices are at assumed version
 
 ## Random Scripts
 The random scripts were written before I learned about Modules. I haven't needed them in a few years and the ones I still use have been copied into the Aluminium module.
