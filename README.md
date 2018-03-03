@@ -4,7 +4,7 @@ This repository contains random scripts and my Aluminium PowerShell module. Each
 The 146 functions in Aluminium increase efficiency, minimize mundane, and create reports. Most functions require PowerCLI, ImportExcel, ReportHTML, PoshRSJob, or HP Scripting Tools modules. A few examples:<br>
 * **Connect-SSHPutty**: uses Start-VMHostService, launches Putty with credentials, then Stop-VMHostService when Putty is closed
 * **Get-HBAFirmware**: gets VMHost NIC driver and FCoE driver/firmware version with Get-EsxCLI<br>
-* **Get-HPOAInventory**: connects to a HP Onboard Administrator, discovers all linked enclosures, then creates a CSV report of identified hardware<br>
+* **Get-HPOAInventory**: connects to a HP Onboard Administrator, discovers all linked enclosures, then creates a CSV report of identified hardware. Uses Connect-HPOA, Get-HPOATopology, Get-HPOAServerStatus, and Get-HPOAServerPortMap<br>
 * **Get-VMDatastoreDetails**: creates detailed report for all VMDKs for multiple VMs with Get-View<br>
 * **Get-NTP_Health**: reports on VMHost time dift by using ExtensionData.ConfigManager.DateTimeSystem to get time on VMHosts and comparing to local time<br>
 * **Invoke-DefragDatastoreCluster**: shuffle VMDKs with Move-HardDisk between datastores in datastore cluster to optimally fill each datastore to 83%. Results in continguous free space<br>
