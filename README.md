@@ -6,7 +6,7 @@ The 146 functions in Aluminium increase efficiency, minimize mundane, and create
 * **Get-HBAFirmware**: gets VMHost NIC driver and FCoE driver/firmware version with Get-EsxCLI<br>
 * **Get-HPOAInventory**: connects to a HP Onboard Administrator, discovers all linked enclosures, then creates a CSV report of identified hardware. Uses Connect-HPOA, Get-HPOATopology, Get-HPOAServerStatus, and Get-HPOAServerPortMap<br>
 * **Get-VMDatastoreDetails**: creates detailed report for all VMDKs for multiple VMs with Get-View<br>
-* **Get-NTP_Health**: reports on VMHost time dift by using ExtensionData.ConfigManager.DateTimeSystem to get time from VMHosts then compare to local time<br>
+* **Get-NTP_Health**: reports on VMHost time dift using ExtensionData.ConfigManager.DateTimeSystem to get time from VMHosts then compare to local time<br>
 * **Invoke-DefragDatastoreCluster**: shuffle VMDKs with Move-HardDisk between datastores in datastore cluster to optimally fill each datastore to 83%. Results in continguous free space<br>
 * **Move-VMConfig**: migrates a VM's configuration files(VMX, nvram, etc) to the same datastore as Hard Disk 1 with VirtualMachineRelocateSpec. Useful during SAN/datastore migrations<br>
 * **Move-VMtovCenter**: migrates a VM between vCenters by unregistering a VM from a Source vCenter, registering it on a destination vCenter, updating the NIC network labels, and powering on the VM. Tested between vCenter 5.1U3 and vCenter 6.0U1<br>
