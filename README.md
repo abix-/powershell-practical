@@ -1,4 +1,4 @@
-This repository contains random scripts and a PowerShell/PowerCLI module named Aluminium which I use to support VMware vSphere environments. Each script was written to solve an operational or engineering puzzle. An ideal world would have a description of the puzzle, the constraints, and reasoning into why I wrote the script the way I did. I neither recorded nor recall the details.
+This repository contains random scripts and a PowerShell/PowerCLI module named Aluminium. Each script was written to solve an operational or engineering puzzle for my VMware vSphere environments. An ideal world would have a description of the puzzle, the constraints, and reasoning into why I wrote the script the way I did. I neither recorded nor recall the details.
 
 ## Aluminium
 The 146 functions in Aluminium allow me to increase efficiency and minimize mundane efforts. Here are a few examples:<br>
