@@ -24,6 +24,6 @@ My intention is for this respository to be a reference for the next guy who come
 * Add comments
 * Continue to increment
 * Add explanations about the puzzles and constraints
-* Commit useless snippets without reason  
+* Commit useless snippets
 
 This will never be complete but will always be fun.
