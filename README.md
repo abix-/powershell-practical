@@ -19,7 +19,7 @@ The 146 functions increase efficiency, minimize mundane, and create reports. Mos
 * **Start-DatastoreMigration**: migrates VMs from a source Datastore/DatastoreCluster/MigrationGroup to a destination DatastoreCluster. Supports FillDatastorePercent to limit how full each datastore gets. Defaults to two svMotions at a time. I'ved migrated 500TB+ with this<br>
 * **Start-ILO**: reads the output from Get-HPOAInventory to quickly Start-Process Internet Explorer for ILO IP
 * **Test-ESXiAccount**: validates that assumed credentials are valid on VMHosts with Test-ESXiAccount<br>
-* **Test-PortGroups**: validates the trunking configuration of VMHosts by moving a VM between every PortGroup on a VMHost. Will Set-VMGuestNetwork with an IP(Based on PortGroup name) for each PortGroup then ping with Test-Connection and finally set the next PortGroup with Set-NetworkAdapter. The cycle repeats until all PortGroups have been tested. A ping failure likely indicates a trunking/networking misconfiguration
+* **Test-PortGroups**: validates the trunking configuration of VMHosts by moving a VM between every PortGroup on a VMHost. Will Set-VMGuestNetwork with an IP(based on PortGroup name) for each PortGroup then ping with Test-Connection and finally set the next PortGroup with Set-NetworkAdapter. The cycle repeats until all PortGroups have been tested. A ping failure likely indicates a trunking/networking misconfiguration
 * **Test-VMHostIODevice**: uses output from Get-VMHostIODevice to validate that driver/firmware for FCoE and Network devices are at assumed revision
 
 ## Random Scripts
