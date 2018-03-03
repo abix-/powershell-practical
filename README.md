@@ -18,9 +18,12 @@ The 146 functions in Aluminium allow me to increase efficiency and minimize mund
 * **Start-DatastoreMigration**: migrates VMs from a source Datastore/DatastoreCluster/MigrationGroup to a destination DatastoreCluster. Supports FillDatastorePercent to limit how full each datastore gets. Defaults to two svMotions at a time. Has been used to migrate 500TB+ between arrays.<br>
 * **Test-ESXiAccount**: validates that assumed credentials are valid on VMHosts<br.
 
-My intention is for this respository to be a reference for the next guy who comes along. If you did not get here by searching GitHub for a PowerShell cmdlet, I recommend doing this and then checking the Code results. Uncommented code examples are much better than no code examples.
+## Random Scripts
+These random scripts were written before I learned about PowerShell Modules. I haven't needed them in a few years and the ones I still use have been moved into the Aluminium module.
 
 ## Next
+My intention is for this respository to be a reference for the next guy who comes along. If you did not get here by searching GitHub for a PowerShell cmdlet, then I recommend doing this and then checking the Code results. Uncommented code examples are much better than no code examples.
+
 * Add comments
 * Continue to increment
 * Add explanations about the puzzles and constraints
