@@ -21,10 +21,9 @@ The 146 functions in Aluminium allow me to increase efficiency and minimize mund
 My intention is for this respository to be a reference for the next guy who comes along. If you did not get here by searching GitHub for a PowerShell cmdlet, I recommend doing this and then checking the Code results. Uncommented code examples are much better than no code examples.
 
 ## Next
-* Upload all my semi-useful scripts  
-* Add comments to every function  
-* Continue to improve random scripts  
-* Add explanations about the puzzles, constraints, and reasoning  
-* Commit unfinished useless snippets without explanation  
+* Add comments
+* Continue to increment
+* Add explanations about the puzzles and constraints
+* Commit useless snippets without reason  
 
 This will never be complete but will always be fun.
