@@ -1,0 +1,19 @@
+Term,Math,Definition
+Total pCPU,vCenter Query,Total physical CPU cores on all VMHosts in the Cluster
+Total pRAM,vCenter Query,Total physical RAM on all VMHosts in the Cluster
+High Availability Buffer,1 VMHost's resources,Buffer reserved for N+1
+Usable pRAM,(Total pCPU) - (High Availability Buffer),Maximum usable physical CPU while respecting the High Availability Buffer. Consuming CPU beyond this will impact performance during VMHost patching/outage
+Usable pRAM,(Total pCPU) - (High Availability Buffer),Maximum usable physical RAM while respecting the High Availability Buffer. Consuming RAM beyond this will impact performance during VMHost patching/outage
+Virtual Consolidation Ratio,Set by Systems Engineering,Multiplier for physical CPU and physical RAM. Determines how heavily we overallocate our virtual environment
+vCPU:pCPU Ratio,Set by Systems Engineering,Multiplier for physical CPU. Determines how heavily we overallocate CPU in our virtual environment
+vRAM:pCPU Ratio,Set by Systems Engineering,Multiplier for physical RAM. Determines how heavily we overallocate RAM in our virtual environment
+Usable vCPU,(Usable pCPU) * (vCPU:pCPU ratio),Maximum allocatable vCPU for Virtual Machines. Allocating resources beyond this may result in contention
+Usable vRAM,(Usable pRAM) * (vRAM:pRAM ratio),Maximum allocatable vRAM for Virtual Machines. Allocating resources beyond this may result in contention
+Allocated vCPU,vCenter Query,Total vCPU allocated to VMs in the Cluster
+Allocated vRAM,vCenter Query,Total vRAM allocated to VMs in the Cluster
+Available vCPU,(Usable vCPU) - (Allocated vCPU),vCPU available for VM allocation
+Available vRAM,(Usable vRAM) - (Allocated vRAM),vRAM available for VM allocation
+CPU Usage,vRealize Operations Manager Query,VMHost CPU used by all virtual machines in the cluster
+RAM Consumed,vRealize Operations Manager Query,VMHost RAM used by all virtual machines in the cluster
+CPU Contention,vRealize Operations Manager Query,Percentage of time the VM is contending for physical CPU access
+RAM Contention,vRealize Operations Manager Query,Percentage of time the VM is contending for physical RAM access
