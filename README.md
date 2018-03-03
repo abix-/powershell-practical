@@ -19,6 +19,7 @@ The 146 functions in Aluminium increase efficiency, minimize mundane, and create
 * **Start-DatastoreMigration**: migrates VMs from a source Datastore/DatastoreCluster/MigrationGroup to a destination DatastoreCluster. Supports FillDatastorePercent to limit how full each datastore gets. Defaults to two svMotions at a time. I'ved migrated 500TB+ between storage arrays with this<br>
 * **Start-ILO**: reads the output from Get-HPOAInventory to quickly launch Internet Explorer for ILO IP
 * **Test-ESXiAccount**: validates that assumed credentials are valid on VMHosts<br>
+* **Test-PortGroups**: validates the trunking configuration of VMHosts by moving a VM between every PortGroup on a VMHost. The VM will be set with an IP valid for each PortGroup then pinged. A ping failure likely indicates a trunking/networking misconfiguration
 * **Test-VMHostIODevice**: uses output from Get-VMHostIODevice to validate that driver/firmware for FCoE and Network devices are at assumed revision
 
 ## Random Scripts
