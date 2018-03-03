@@ -1,4 +1,4 @@
-This repository contains random scripts and my Aluminium PowerShell module. Each script was written to solve an operational or engineering puzzle for my VMware vSphere environments. An ideal world would have a description of the puzzle, the constraints, and reasoning into why I wrote the script the way I did. I neither recorded nor recall the details.
+This repository contains random scripts and my Aluminium PowerShell module. Each script was written to solve an operational or engineering puzzle for my VMware vSphere environments. An ideal world would have a description of the puzzle, the constraints, and reasoning into why I wrote the script the way I did. I neither recorded nor recall the details
 
 ## Aluminium
 The 146 functions in Aluminium increase efficiency and minimize mundane efforts. Most functions require PowerCLI, ImportExcel, ReportHTML, PoshRSJob, or HP Scripting Tools modules. A few examples:<br>
