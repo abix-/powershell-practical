@@ -23,7 +23,7 @@ The 146 functions increase efficiency, minimize mundane, and create reports. Mos
 * **Test-VMHostIODevice**: uses output from Get-VMHostIODevice to validate that driver/firmware for FCoE and Network devices are at assumed revision
 
 ## Random Scripts
-These random scripts were written before I learned about PowerShell Modules. I haven't needed them in a few years and the ones I still use have been copied into the Aluminium module.
+The random scripts were written before I learned about Modules. I haven't needed them in a few years and the ones I still use have been copied into the Aluminium module.
 
 ## Why?
 This respository is a reference for the next person with a puzzle. I highly recommend searching GitHub for a PowerShell cmdlet then checking the Code results. Uncommented code examples are much better than no code examples.
