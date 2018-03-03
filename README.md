@@ -10,7 +10,7 @@ The 146 functions in Aluminium allow me to increase efficiency and minimize mund
 * **Invoke-DefragDatastoreCluster**: shuffle VMDKs between datastores in datastore cluster to optimally fill each datastore to 83%. Results in continguous free space<br>
 * **Move-VMConfig**: migrates a VM's configuration files(VMX, nvram, etc) to the same datastore as Hard Disk 1. Useful during SAN/datastore migrations<br>
 * **Move-VMtovCenter**: migrates a VM between vCenters by unregistering a VM from a Source vCenter, registering it on a destination vCenter, updating the NIC network labels, and powering on the VM. Tested between vCenter 5.1U3 and vCenter and 6.0U1<br>
-* **New-VMHost**: work in progress to accelerate ESXi VM Host build times. Modifies ILO users, creates custom ESXi ISO, performs install post-configuration<br>
+* **New-VMHost**: work in progress to accelerate ESXi VMHost build times. Modifies ILO users, creates custom ESXi ISO, performs install post-configuration<br>
 * **Optimize-ClusterBalance**: supports Round Robin and Quick balancing. Round Robin balances VMs across a cluster by splitting into unique types, then Round Robining evenly across all hosts. Quick makes the minimum required vMotions to balance a cluster based on allocated VM Host memory<br>
 * **Set-DNS**: uses export from Get-DNS to set static DNS settings on multiple Windows servers<br>
 * **Start-ApplicanceHealthReport**: creates HTML report on disk usage, service status, ssh status, and vSphere web client response time for vSphere appliances with Invoke-VMScript and regex. Uses Get-Service and Get-WMIObject on Windows. Uses df, chkconfig in a cron job, and systemctl on Linux. This was easier than dealing with SCOM<br>
