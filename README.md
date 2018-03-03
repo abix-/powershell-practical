@@ -2,7 +2,7 @@ This repository contains my Aluminium PowerShell module, community scripts, and 
 
 ## Aluminium
 The 146 functions increase efficiency, minimize mundane, and create reports. Most functions require [PowerCLI](https://www.powershellgallery.com/packages/VMware.PowerCLI), [ImportExcel](https://github.com/dfinke/ImportExcel), [ReportHTML](https://www.powershellgallery.com/packages/ReportHTML), [PoshRSJob](https://github.com/proxb/PoshRSJob), or [HP Scripting Tools](https://www.hpe.com/us/en/product-catalog/detail/pip.scripting-tools-for-windows-powershell.5440657.html) modules. A few examples:<br>
-* **Connect-SSHPutty**: uses Start-VMHostService, launches Putty with credentials, then Stop-VMHostService when Putty is closed
+* **Connect-SSHPutty**: uses Start-VMHostService SSH, launches Putty with credentials, then Stop-VMHostService when Putty is closed
 * **Get-HBAFirmware**: gets VMHost NIC driver and FCoE driver/firmware version with Get-EsxCLI<br>
 * **Get-HPOAInventory**: connects to a HP Onboard Administrator, discovers all linked enclosures, then creates a CSV report of identified hardware. Uses Connect-HPOA, Get-HPOATopology, Get-HPOAServerStatus, and Get-HPOAServerPortMap<br>
 * **Get-VMDatastoreDetails**: creates detailed report for all VMDKs for multiple VMs with Get-VM and Get-View<br>
