@@ -2,6 +2,7 @@ This repository contains random scripts and a PowerShell/PowerCLI module named A
 
 ## Aluminium
 The 146 functions in Aluminium allow me to increase efficiency and minimize mundane efforts. Here are a few examples:<br>
+* **Connect-SSHPutty**: starts SSH service on VMHost, launches Putty with credentials, and stops SSH service when Putty is closed
 * **Get-HBAHostFirmware**: get NIC driver and FCoE driver/firmware version for VMHosts<br>
 * **Get-HPOAInventory**: connects to a HP Onboard Administrator, discovers all linked enclosures, then creates a CSV report of identified hardware<br>
 * **Get-VMDatastoreDetails**: creates detailed report for all VMDKs for a list of VMs<br>
@@ -16,6 +17,7 @@ The 146 functions in Aluminium allow me to increase efficiency and minimize mund
 * **Start-ClusterCapacityReport**: creates a Cluster Capacity HTML Report on vCPU/vRAM allocation, usage, availability, and contention for each Cluster. HTML report has separate tabs for each Cluster. Requires ImportExcel and ReportHTML modules. Connects to vROPs with REST and PowerShell. Requires CPU contention report in vROPs<br>
 * **Start-ClusterCapacitySummary**: creates a Cluster Capacity XLSX Summary on CPU/vRAM allocation, usage, availability, and contention for each Cluster. CPU Usage is calculated for 9AM to 5PM and 5PM to 9AM. Requires ImportExcel module. Connects to vROPs with REST and PowerShell. Requires CPU contention report in vROPs<br>
 * **Start-DatastoreMigration**: migrates VMs from a source Datastore/DatastoreCluster/MigrationGroup to a destination DatastoreCluster. Supports FillDatastorePercent to limit how full each datastore gets. Defaults to two svMotions at a time. Has been used to migrate 500TB+ between arrays.<br>
+* **Start-ILO**: reads the output from Get-HPOAInventory to quickly launch Internet Explorer for ILO IP
 * **Test-ESXiAccount**: validates that assumed credentials are valid on VMHosts<br>
 
 ## Random Scripts
