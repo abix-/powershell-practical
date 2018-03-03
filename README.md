@@ -1,7 +1,7 @@
 This repository contains my Aluminium PowerShell module and random scripts. Each script was written to solve an operational or engineering puzzle for my VMware vSphere environments. An ideal world would have a description of the puzzle, the constraints, and reasoning into why I wrote the script the way I did. I neither recorded nor recall the details
 
 ## Aluminium
-The 146 functions in Aluminium increase efficiency, minimize mundane, and create reports. Most functions require PowerCLI, ImportExcel, ReportHTML, PoshRSJob, or HP Scripting Tools modules. A few examples:<br>
+The 146 functions increase efficiency, minimize mundane, and create reports. Most functions require PowerCLI, ImportExcel, ReportHTML, PoshRSJob, or HP Scripting Tools modules. A few examples:<br>
 * **Connect-SSHPutty**: uses Start-VMHostService, launches Putty with credentials, then Stop-VMHostService when Putty is closed
 * **Get-HBAFirmware**: gets VMHost NIC driver and FCoE driver/firmware version with Get-EsxCLI<br>
 * **Get-HPOAInventory**: connects to a HP Onboard Administrator, discovers all linked enclosures, then creates a CSV report of identified hardware. Uses Connect-HPOA, Get-HPOATopology, Get-HPOAServerStatus, and Get-HPOAServerPortMap<br>
