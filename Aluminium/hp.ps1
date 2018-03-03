@@ -8,11 +8,10 @@ function Get-HPOAInventory {
     #Todo
     #-support Mezz cards
 
-    $pw = Get-SecureStringCredentials Admin -PlainPassword
+    $pw = Get-SecureStringCredentials -Username Admin -PlainPassword
 
     Write-Host "$($OA): Connecting to Onboard Administrator and finding enclosures"
     $main_connection = Connect-HPOA -OA $OA -Username $Username -Password $pw
-    Write-Debug "here"
     $enclosures = @(Get-HPOATopology -Connection $main_connection | Select-Object -ExpandProperty LinkedEnclosureInfo | Sort-Object EnclosureName)
     Write-Host "$($OA): $($enclosures.count) enclosures found"
 
@@ -26,7 +25,7 @@ function Get-HPOAInventory {
         $inventory += GetServerInfo -connection $_connect -enclosure $_e.EnclosureName -status $_status -portmap $_portmap
     }
 
-    if($inventory.count -gt 0) { Export-Results $inventory -ExportName "HP_Inventory_$OA" }
+    if($inventory.count -gt 0) { Export-Results $inventory -ExportName "HP_Inventory_$OA" -excel }
 }
 
 function GetServerInfo($connection,$enclosure,$status,$portmap) {
@@ -112,13 +111,13 @@ function Start-ILO {
         $exportPath = (Get-Location).Path
     }
 
-    $HPInventories = Get-ChildItem "$HPInventoryPath\*.csv" | Where-Object{$_.name -like "HP_Inventory_*"}
-    $HPInventories | ForEach-Object{ Add-Member -InputObject $_ -MemberType NoteProperty -Name Type -Value ($_.Name -replace "_(\d{8})_(\d{6})\.csv") -Force }
+    $HPInventories = Get-ChildItem "$HPInventoryPath\*.xlsx" | Where-Object{$_.name -like "HP_Inventory_*"}
+    $HPInventories | ForEach-Object{ Add-Member -InputObject $_ -MemberType NoteProperty -Name Type -Value ($_.Name -replace "_(\d{8})_(\d{6})\.xlsx") -Force }
     $OAs = @($HPInventories | Select-Object -Unique -ExpandProperty Type)
     $all = @()
     foreach($_o in $OAs) {
         Write-Host "Working on $_o"
-        $all += @(Import-Csv ($HPInventories | Where-Object{$_.Name -like "$_o*.csv"} | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName)
+        $all += @(Import-Excel ($HPInventories | Where-Object{$_.Name -like "$_o*.xlsx"} | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName)
     }
     $filtered = @($all | Where-Object{$_.Server_Name -like "*$Name*"})
 
@@ -136,4 +135,40 @@ function Start-ILO {
         }
         default { }
     }
+}
+
+function Get-HPILOHostPowerSavers {
+    [cmdletbinding()]
+    param (
+        $XLSX = "\\path\to\file",
+        $ILOUser = "admin",
+        [switch]$report,
+        [string]$reportName = "HPILOHostPowerSavers_"
+    )
+
+    $ILOpw = Get-SecureStringCredentials -Username $ILOUser -PlainPassword
+    $hosts = Import-Excel $XLSX | ?{$_.ILO}
+    
+    $results = @()
+    foreach($_h in $hosts) {
+        $this = $null
+        $this = Find-HPiLO "$($_h.ILO)" | Get-HPIloHostPowerSaver -Username $ILOUser -Password $ILOpw -DisableCertificateAuthentication
+
+        if($this."STATUS_MESSAGE" -eq "OK") {
+            Write-Host "[$($_h.Hostname)] Queried ILO on $($_h.ILO)" -ForegroundColor Green
+            $results += [pscustomobject][ordered]@{
+                Hostname = $_h.Hostname
+                IP = $this.IP
+                HOST_POWER_SAVER = $this.HOST_POWER_SAVER
+            }
+        } else {
+            Write-Host "[$($_h.Hostname)] Failed to query ILO on $($_h.ILO)" -ForegroundColor Red
+        }
+    }
+
+    if($report -eq $true -and $results.count -gt 0) {
+        Export-Results -results $results -exportName $reportName -excel
+    }
+
+    $results
 }

@@ -1,8 +1,8 @@
 function Set-PowerCLITitle($vcenter) {
     $productName = "PowerCLI"
-    $version = Get-PowerCLIVersion
-    if($vcenter) { $windowTitle = "[{2}] - $productName {0}.{1}" -f $version.Major, $version.Minor, $vcenter } 
-    else { $windowTitle = "$productName {0}.{1}" -f $version.Major, $version.Minor }
+    $version = (get-module -Name VMware.VimAutomation.Core).Version
+    if($vcenter) { $windowTitle = "[{1}] - $productName {0}" -f $version, $vcenter } 
+    else { $windowTitle = "$productName {0}" -f $version }
     $host.ui.RawUI.WindowTitle = $windowTitle
 }
 
@@ -48,17 +48,49 @@ function Export-Results {
 
 function Search-Object {
     param(
-        [Parameter(ValueFromPipeline = $true)]$InputObject = $new,
+        [Parameter(ValueFromPipeline = $true)]$InputObject,
         [Parameter(ParameterSetName='Property')][string]$Property,
         [Parameter(ParameterSetName='Value')][string]$Value,
-        [int]$Depth = 1
+        [int]$Depth = 0
     )
     if([System.Management.Automation.LanguagePrimitives]::GetEnumerator($InputObject)) { $InputObject = $InputObject[0] }
+    #Get the properties at depth 0
+    $all = Get-Properties -Object $InputObject -Depth 0
+
+    for($i = 0; $i -lt $depth; $i++) {
+        #Get the properties at the current depth
+        $this = @($all | Where-Object{$_.Depth -eq $i -and $_.Properties -ge 1})
+        foreach($_t in $this) {
+            Write-Host "[Depth $i] $($_t.path)"
+            $parent = Invoke-Expression "`$InputObject.$($_t.Path)"
+            $new = Get-Properties -Object $parent -Path ($_t.Path) -Depth ($i + 1)
+            foreach($_n in $new) {            
+                #Find similar on objects with the same type and name
+                $similar = @($all | Where-Object{$_.Type -eq $_n.Type -and $_.Name -eq $_n.Name})
+                if($similar.count -gt 0) {
+                    #Compare the values for any conflicts
+                    $conflict = @($similar | Where-Object{$_.Value -eq $_n.Value})
+                    if($conflict.count -lt 2) {
+                        $all += $_n
+                    } else { 
+                        #Write-Host "Skipping apparently duplicate property $($_n.Path)" 
+                    }
+                } else {
+                    $all += $_n
+                }                   
+            }
+        }          
+    }
+
+    $all
+    <#
     $all = GetProperties -Object $InputObject -Depth 0
     Write-Host "[Depth 0] $($all.count) properties"
+    write-debug "here"
 
-    for($i = 1; $i -le $depth; $i++) {
-        $this = @($all | Where-Object{$_.Depth -eq ($i - 1) -and $_.Properties -ge 1})
+
+    for($i = 0; $i -le $depth; $i++) {
+        $this = @($all | Where-Object{$_.Depth -eq $i -and $_.Properties -ge 1})
         Write-Host "[Depth $i] $($this.count) properties"
         foreach($_t in $this) {
             $parent = Invoke-Expression "`$InputObject.$($_t.Path)"
@@ -79,45 +111,45 @@ function Search-Object {
             } else { Write-Host "Skipping $($_t.Name)" }
         }
     }
+    #>
 
     switch($PSCmdlet.ParameterSetName) {
-        "Property" { $all | Where-Object{ $_.name -like "*$Property*" } | Select-Object Path,Value,Type }
-        "Value" { $all | Where-Object{ $_.Value -like "*$Value*" } | Select-Object Path,Value,Type }
+        "Property" { $all | Where-Object{ $_.name -like "*$Property*" } } #| Select-Object Path,Value,Type }
+        "Value" { $all | Where-Object{ $_.Value -like "*$Value*" } } #| Select-Object Path,Value,Type }
         default { $all }
     }
 }
 
-function GetProperties($Object,$Path,$Depth) {
+function Get-Properties {
+    [cmdletbinding()]
+    param (
+        $Object,$Path,$Depth
+    )
     $results = @()
-    if(!$object) { Write-Host "Oops"; return }
+    if(!$object) { Write-Verbose "Oops"; return }
     foreach($_c in $object.PSObject.Properties) {
-        if($path) { $newpath = "$path.$($_c.Name)" } else { $newpath = "$($_c.Name)" }
-        $child = Invoke-Expression "`$InputObject.$newpath"  
+        if($path) { $fullPath = "$path.$($_c.Name)" } else { $fullPath = "$($_c.Name)" }
+        $thisName = $_c.Name
+        $child = Invoke-Expression "`$Object.$thisName"  
         if($child) {
-        $child_properties = @($child.PSObject.Properties)
-            Write-Verbose "[$depth] [$newpath] $($child_properties.count) sub-properties"
-            $results += [pscustomobject][ordered]@{
-                Path = $newpath
-                Name = $_c.Name
-                Value = $_c.Value
-                Type = $_c.TypeNameofValue
-                IsSettable = $_c.IsSettable
-                Properties = ($child_properties.count)
-                Depth = $Depth
-            }
-        } else { Write-Verbose "[$depth] [$newpath] no child found" }
+            $child_properties = @($child.PSObject.Properties)
+            Write-Verbose "[$depth] [$fullpath] $($child_properties.count) children"
+            $childCount = $child_properties.count
+        } else { 
+            Write-Verbose "[$depth] [$fullpath] no children" 
+            $childCount = 0
+        }
+        $results += [pscustomobject][ordered]@{
+            Depth = $Depth
+            Path = $fullPath
+            Name = $_c.Name
+            Properties = $childCount
+            Value = $_c.Value
+            Type = $_c.TypeNameofValue
+            IsSettable = $_c.IsSettable
+        }
     }
     return $results
-}
-
-function Start-Day {
-    [cmdletbinding()]
-    param ( )
-    Connect-vCenter start-day
-
-    #Run Test-vCenters
-    Write-Host "Starting checks against connected vCenters"
-    Test-vCenter
 }
 
 function Set-ClipboardText {

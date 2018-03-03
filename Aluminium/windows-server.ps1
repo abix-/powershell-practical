@@ -154,37 +154,6 @@ function addToDNSObj($cn="N/A",$stat="N/A",$index="N/A",$ip="N/A",$pdns="N/A",$s
     return $obj
 }
 
-function Get-Firmware {
-    [cmdletbinding()]
-    Param (
-        $vmhost
-    )
-
-    function writeToObj($vmhost,$firmware="N/A",$driver="N/A") {
-        return 
-    }
-
-    if($vmhost.EndsWith(".txt")) { $vmhost = Get-Content $vmhost }
-
-    $allobj = @()
-    foreach($v in $vmhost) {
-        $i++
-        $nic = "N/A"
-        Write-Progress -Activity "Reading data from $v" -Status "[$i/$($vmhost.count)]" -PercentComplete (($i/$vmhost.count)*100)
-        $esxcli = Get-EsxCli -VMHost $v
-        $nic = $esxcli.network.nic.get("vmnic4")
-        $allobj += New-Object PSObject -Property @{
-            Host = $vmhost
-            Firmware = $firmware
-            Driver = $driver
-        }
-    
-        writeToObj $v $nic.driverinfo.firmwareversion $nic.driverinfo.version
-    }
-
-    $allobj | Select-Object Host, Firmware, Driver
-}
-
 function Wait-Service {
     [cmdletbinding()]
     param (
@@ -222,4 +191,53 @@ function Get-Uptime {
     Write-Host "ComputerName: $ComputerName"
     Write-Host "Last boot: $lastboot"
     Write-Host "Uptime: $($uptime.Days) days, $($uptime.Hours) hours, $($uptime.Minutes) minutes"
+}
+
+function Find-BrokenSvcAccounts {
+    [cmdletbinding()]
+    param (
+        $domainControllers = @("VMName","VMName","VMName"),
+        [Parameter(Mandatory=$true)]$username,
+        [Parameter(Mandatory=$true)]$password
+    )
+
+    #"VMName","VMName"
+
+    $secpasswd = ConvertTo-SecureString $password -AsPlainText -Force
+    $cred = New-Object System.Management.Automation.PSCredential ($username, $secpasswd)
+
+    $lockedResults = @()
+    $disabledResults = @()
+    foreach($_d in $domainControllers) {
+        Write-Host "[$_d] Querying Active Directory"
+        $locked = @(Search-ADAccount -LockedOut -Server $_d -Credential $cred | ?{$_.SamAccountName -like "svc*"} | sort LastLogonDate -Descending)
+        $disabled = @(Search-ADAccount -AccountDisabled -Server $_d -Credential $cred | ?{$_.SamAccountName -like "svc*"} | sort LastLogonDate -Descending)
+
+        Write-Host "[$_d] Found $($locked.count) locked svc accounts"
+        if($locked.Count -gt 0) {
+            #$locked | Select SamAccountName,LockedOut | Out-Default
+            $locked | %{
+                $lockedResults += [pscustomobject][ordered] @{
+                    DomainController = $_d
+                    SamAccountName = $_.SamAccountName
+                    LockedOut = $_.LockedOut
+                }
+            }
+        }
+        
+        Write-Host "[$_d] Found $($disabled.count) disabled svc accounts"
+            if($disabled.Count -gt 0) {
+            #$disabled | Select SamAccountName,Enabled | Out-Default
+            $disabled | %{
+                $disabledResults += [pscustomobject][ordered] @{
+                    DomainController = $_d
+                    SamAccountName = $_.SamAccountName
+                    Enabled = $_.Enabled
+                }
+            }
+        }
+    }
+
+    $lockedResults | Out-Default
+    $disabledResults | Out-Default
 }

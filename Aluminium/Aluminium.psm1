@@ -179,7 +179,6 @@ function Start-ChromePlus {
         $plusFlags = "--cipher-suite-blacklist=0x0088,0x0087,0x0039,0x0038,0x0044,0x0045,0x0066,0x0032,0x0033,0x0016,0x0013"
     )
     taskkill.exe /F /IM chrome.exe /T
-    Write-Debug "this is a test"
     Write-Host "Starting Chrome with $plusFlags"
     Start-Process $chromeExe -ArgumentList $plusFlags
 }

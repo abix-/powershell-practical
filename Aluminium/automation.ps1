@@ -480,18 +480,13 @@ function Get-SecureStringCredentials() {
 
     $secureCredentials = @($secureStrings | Where-Object{$_.Username -eq $Username -and $_.SecureString})
 
-    if($secureCredentials.count -eq 1) {
-        Write-Host "[SecureString] Loaded $Username from $secureStringsFile"
-    } elseif($secureCredentials.count -eq 0) {
+    if($secureCredentials.count -eq 0) {
         Write-Host "[SecureString] Username=[$username] not found in $secureStringsFile"
-        $pw_secure = Read-Host "Password for $Username" -AsSecureString | ConvertFrom-SecureString
-        $secureCredentials += [pscustomobject][ordered]@{
-            Username = $Username
-            SecureString = $pw_secure
-        }
+        Return
     }
 
     if($secureCredentials.Count -eq 1) {
+        Write-Host "[SecureString] Loaded $Username from $secureStringsFile"
         switch($PSCmdlet.ParameterSetName) {
             "PlainPassword" {
                 $temp = [System.Runtime.InteropServices.marshal]::SecureStringToBSTR(($secureCredentials.SecureString | ConvertTo-SecureString))
@@ -537,7 +532,7 @@ function Add-SecureStringCredentials() {
     }
 
     $secureStrings | Export-Csv -NoTypeInformation $secureStringsFile
-    Write-Host "Added $Username to $secureStringsFile"
+    Write-Host "Updated $Username in $secureStringsFile"
 }
 
 function createESXiISO {
@@ -641,15 +636,15 @@ function setESXIPostConfig {
         $VMHost,
         $rootpw,
         $adminpw,
-        $ntpserver = ""
+        $ntpserver = "time.domain.local"
     )
     
     $obj = Get-VMHost -Server $vCenter -Name $VMHost
     if((Get-VMHostNtpServer -VMHost $obj) -eq "$ntpserver") {
         Write-Host "NTP already configured for $ntpserver"
     } else {
-        Write-Host "Setting NTP to time.domain.local"
-        Add-VmHostNtpServer -VMHost $obj -NtpServer "time.domain.local"
+        Write-Host "Setting NTP to $ntpserver"
+        Add-VmHostNtpServer -VMHost $obj -NtpServer $ntpserver
         Get-VMHostFirewallException -VMHost $obj  | Where-Object {$_.Name -eq "NTP client"} | Set-VMHostFirewallException -Enabled:$true
     }
     Write-Host "Starting NTP Service"
@@ -667,6 +662,12 @@ function setESXIPostConfig {
     }
     Write-Host "Granting Admin rights for admin"
     $esxcli.system.permission.set($false,"admin","Admin")
+
+    Write-Host "Setting syslog.global.logdir to template datastore"
+    Set-VMHostLogDir -VMHost $obj
+
+    Write-Host "Setting Config.HostAgent.plugins.hostsvc.esxAdminsGroup to AD_SECURITY_GROUP"
+    $obj | Get-AdvancedSetting -Name Config.HostAgent.plugins.hostsvc.esxAdminsGroup | Set-AdvancedSetting -Value AD_SECURITY_GROUP -Confirm:$false
 }
 
 function pressEnter { Read-Host "Press Enter to continue" }
@@ -755,7 +756,7 @@ function New-VMHost {
         Write-Host "5. [Not implemented] Mount ESXi ISO & Power On Blade"
         Write-Host "6. ESXi Required - Add VM Host to vCenter"
         Write-Host "7. ESXi Required - Add vMotion to VDS"
-        Write-Host "8. ESXi Required - Configure NTP, create admin"
+        Write-Host "8. ESXi Required - Configure NTP, create admin, set persistent logging, set AD group to AD_SECURITY_GROUP"
         Write-Host ""
         $option = Read-Host "1-8, vmhost HOSTNAME, exit"
         $lastoption = $option 
@@ -855,10 +856,10 @@ function Move-VMtovCenter {
         Each VM is Powered Off on the Source, registered on a random host in the Destination cluster, network labels are updated, then the VM is Powered On. By default, confirmation is requested before powering off a VM and VDS switches which start with "N1K" (Ciscso 1000v) are ignored
         .EXAMPLE
         Move VMs listed in testvms.txt from SourevCenter(5.1) to DestinationvCenter(6.0). Do not prompt for confirmation
-        Move-VMtovCenter -Names .\testvms.txt -SourcevCenter "VMName -DestinationvCenter "vCenter6.domain.local" -Force
+        Move-VMtovCenter -Names .\testvms.txt -SourcevCenter "VMName" -DestinationvCenter "VMName" -Force
         .EXAMPLE
         Move VMs listed in testvms.txt from SourevCenter(6.0) to DestinationvCenter(5.1). Do not prompt for confirmation. Look on Nexus 1Ks when updating VM NIC port group
-        Move-VMtovCenter -Names .\testvms.txt -SourcevCenter "vCenter6.domain.local" -DestinationvCenter "VMName -Force -UseN1K:$true
+        Move-VMtovCenter -Names .\testvms.txt -SourcevCenter "VMName" -DestinationvCenter "VMName" -Force -UseN1K:$true
         .PARAMETER Names
         A single VM name or the path to a .txt file with a list of VM names.
         .PARAMETER Force
@@ -871,8 +872,8 @@ function Move-VMtovCenter {
     [cmdletbinding()]
     param (
         [Parameter(Mandatory=$true)]$Names,
-        [string]$SourcevCenter = "VMName
-        [string]$DestinationvCenter = "vCenter6.domain.local",
+        [string]$SourcevCenter = "VMName",
+        [string]$DestinationvCenter = "VMName",
         [string]$DestinationCluster,
         [switch]$Force = $false,
         [switch]$DoNotPowerOn = $false,
@@ -1024,9 +1025,9 @@ function Move-VMtovCenter {
 function Start-VMHostMigration {
     [cmdletbinding()]
     Param (
-        [Parameter(ParameterSetName="VMHost")][Parameter(ParameterSetName="Cluster")][string]$SourcevCenter = "VMName
-        [Parameter(ParameterSetName="VMHost")][Parameter(ParameterSetName="Cluster")][string]$DestinationvCenter = "vCenter6.domain.local",
-        [Parameter(ParameterSetName="VMHost")]$VMHost = "VMName
+        [Parameter(ParameterSetName="VMHost")][Parameter(ParameterSetName="Cluster")][string]$SourcevCenter = "VMName",
+        [Parameter(ParameterSetName="VMHost")][Parameter(ParameterSetName="Cluster")][string]$DestinationvCenter = "VMName",
+        [Parameter(ParameterSetName="VMHost")]$VMHost = "VMName",
         [Parameter(ParameterSetName="Cluster",Mandatory=$true)]$Cluster,
         [string]$vSphereAdmin = "DOMAIN\Admin",
         $logfile = "c:\scripts\_VM_Migrations.log"
@@ -1097,8 +1098,8 @@ function Start-VMHostMigration {
 function Copy-DVStoVSS {
     [cmdletbinding()]
     Param (
-        [string]$vCenter = "VMName
-        [string]$VMHost = "VMName
+        [string]$vCenter = "VMName",
+        [string]$VMHost = "VMName",
         $Credentials,
         [string]$logfile
     )
@@ -1164,8 +1165,8 @@ function Copy-DVStoVSS {
 function Move-UplinkMgmt_DVStoVSS {
     [cmdletbinding()]
     Param (
-        [string]$vCenter = "VMName
-        [string]$VMHost = "VMName
+        [string]$vCenter = "VMName",
+        [string]$VMHost = "VMName",
         $Credentials,
         [string]$logfile
     )
@@ -1241,7 +1242,7 @@ function Move-UplinkMgmt_DVStoVSS {
 function Test-SCSIDevs {
     [cmdletbinding()]
     param (
-        [Parameter(Mandatory=$true,ValueFromPipeline=$true)][VMware.VimAutomation.Types.VMHost]$VMHost
+        [Parameter(Mandatory=$true,ValueFromPipeline=$true)][VMware.VimAutomation.ViCore.Types.V1.Inventory.VMHost]$VMHost
     )
 
     begin {

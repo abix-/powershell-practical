@@ -50,52 +50,82 @@ function BalanceQuick {
     $vmhosts = Get-Cluster $c | Get-VMHost | Where-Object{$_.ConnectionState -eq "Connected" -and $_.PowerState -eq "PoweredOn"}
     $vmhosts | ForEach-Object{Add-Member -InputObject $_ -MemberType NoteProperty -Name VMs -Value @($_ | Get-VM) -Force }
 
-    #Determine an "ideal" CPU ratio by dividing the sum of all VM CPUs by the sum of all VMHost CPUs
-    $idealcpu = ($types.vms | Measure-Object -Sum -Property NumCpu).Sum / ($vmhosts | Measure-Object -Sum -Property NumCpu).sum
+    #Determine ideal vCPU allocation by dividing the sum of VM vCPU by the number of VMHosts
+    $idealcpu = [math]::Round(($types.vms | Measure-Object -Sum -Property NumCpu).Sum / $vmhosts.count,0)
     
-    #Determine an "ideal" RAM allocation by dividing the sum of all VM memory by the number of VMHosts
-    $idealram = ($types.vms | Measure-Object -Sum -Property MemoryGB).Sum / $vmhosts.count
-    Write-Host "[$c] Ideal CPU ratio is $idealcpu. Ideal RAM allocation is $idealram GB."
+    #Determine ideal vRAM allocation by dividing the sum of VM vRAM by the number of VMHosts
+    $idealram = [math]::Round(($types.vms | Measure-Object -Sum -Property MemoryGB).Sum / $vmhosts.count,0)
+    Write-Host "[$c] Ideal vCPU allocation is $idealcpu. Ideal vRAM allocation is $idealram`GB"
+
+    $drsGroups = @(Get-DrsClusterGroup -Cluster $c -Type VMGroup)
+
+    switch($constraint) {
+        "vRAM" { $cProp = "MemoryGB"; 
+                $sortProp = "MemoryAllocated"; 
+                $ideal = $idealram; 
+                $ideal2 = $idealcpu 
+        }
+        "vCPU" { $cProp = "NumCPU"
+                $sortProp = "CPUAllocated"
+                $ideal = $idealcpu 
+                $ideal2 = $idealram 
+        }
+        default { return }
+    }
 
     $success = "empty"
     do {
         #Calculate CPU Ratio and Memory Allocation
         foreach($_v in $vmhosts) {
-            Add-Member -InputObject $_v -MemberType NoteProperty -Name CPURatio -Value (($_v.vms | Measure-Object -Sum -Property NumCPU).sum / $_v.NumCpu) -Force
+            Add-Member -InputObject $_v -MemberType NoteProperty -Name CPUAllocated -Value ($_v.vms | Measure-Object -Sum -Property NumCPU).sum -Force
             Add-Member -InputObject $_v -MemberType NoteProperty -Name MemoryAllocated -Value ($_v.vms | Measure-Object -Sum -Property MemoryGB).sum -Force
         }
 
-        $busy_hosts = @($vmhosts | Sort-Object MemoryAllocated -Descending | Where-Object{$_.MemoryAllocated -gt $idealram})
-        $idle_host = $vmhosts | Sort-Object MemoryAllocated | Select-Object -First 1
+        $busy_hosts = @($vmhosts | Sort-Object $sortProp -Descending | Where-Object{$_.$sortProp -gt $ideal})
+        $good_hosts = @($vmhosts | Sort-Object $sortProp -Descending | Where-Object{$_.$sortProp -le $ideal})
+        $idle_host = $vmhosts | Sort-Object $sortProp | Select-Object -First 1
         
         if($busy_hosts.count -gt 0 -and $lastMove -ne "fail") {
-            Write-Host "[$c] $($busy_hosts.count) hosts over $($idealram)GB. Looking for balancing opportunities."
+            #Write-Host "[$c] $($good_hosts.count) nominal hosts. $($busy_hosts.count) hosts over $($ideal) $constraint"
             foreach($_host in $busy_hosts) {
-                foreach($_vm in ($_host.vms | Sort-Object -Property MemoryGB -Descending)) {
-                    if(($idle_host.MemoryAllocated + $_vm.MemoryGB) -lt $idealram) {
-                        Write-Host "[$c] $($_host.Name) - $($_vm.name) $($_vm.memorygb)GB will vMotion to $($idle_host.name)"
+                :zugzug foreach($_vm in ($_host.vms | Sort-Object -Property $cProp -Descending)) {
+                    
+                    #Skip any VMs which are in a DRS Group
+                    foreach($group in $drsGroups) {
+                        if($group.Member -contains $_vm) {
+                            Write-Host "[$c] Skipping $($_vm.Name) because its in DRS Group $($group.Name)"
+                            continue zugzug
+                        }
+                    }
+
+                    if((($idle_host.$sortProp + $_vm.$cProp) -lt $ideal)) {
+                        Write-Host "[$c] $($_host.Name) - $($_vm.name) $($_vm.$cProp) $constraint will vMotion to $($idle_host.name)"
                         Add-Member -InputObject $_host -MemberType NoteProperty -Name VMs -Value (@($_host.VMs) | Where-Object{$_ -ne $_vm}) -Force
                         Add-Member -InputObject $_vm -MemberType NoteProperty -Name TargetVMHost -Value ($idle_host.Name) -Force
                         Add-Member -InputObject $idle_host -MemberType NoteProperty -Name VMs -Value (@($idle_host.VMs) + $_vm) -Force
                         $lastMove = "success"
                         break
                     } else {
-                        write-Verbose "$($_vm.name) $($_vm.memorygb) will NOT fit on the idle host"
+                        write-Verbose "$($_vm.name) $($_vm.$constraint) will NOT fit on the idle host"
                         $lastMove = "fail"
                     }
                 }
                 if($lastMove -eq "success") { break }
-                elseif($lastMove -eq "fail") { Write-Host "[$c] $($_host.name) - No balancing opportunities found" }
+                elseif($lastMove -eq "fail") { Write-Host "[$c] $($_host.name): No balancing possible" }
             }
         } else {
-            Write-Host "[$c] More balancing not possible"
+            Write-Host "[$c] $($good_hosts.count) nominal VMHosts. $($busy_hosts.count) hosts over $($ideal) $constraint. No balancing possible"
             $success = "turtles"
         }
     } while($success -ne "turtles")
     return $vmhosts
 }
 
-function GetVMTypes($c) {
+function GetVMTypes {
+    [cmdletbinding()]
+    param (
+        $c
+    )
     #Initialize array to store results
     $results = @()
     try {
@@ -104,7 +134,7 @@ function GetVMTypes($c) {
     }
 
     catch { WriteLog "Startup-Failed" "Unable to find cluster '$c' on vCenter. Are you connected to vCenter?"; Return }
-    Write-Host "[$($c)] Sorting $($vms.count) VMs"
+    Write-Verbose "[$($c)] Sorting $($vms.count) VMs"
     #Using regex, remove two or three numbers at the end of the VM, and add the Type as a NoteProperty on the VM object. This shortens prod-exchange101 into prod-exchange.
     $vms | ForEach-Object{ Add-Member -InputObject $_ -MemberType NoteProperty -Name Type -Value ($_.Name -replace "(\d{3}$|\d{2}$)") -Force }
    
@@ -123,7 +153,7 @@ function GetVMTypes($c) {
         }
     }
     #Return VM Types for further processing
-    Write-Host "[$($c)] Sorted $(($results | Measure-Object -Property count -Sum).Sum) VMs into $($results.count) types"
+    Write-Verbose "[$($c)] Sorted $(($results | Measure-Object -Property count -Sum).Sum) VMs into $($results.count) types"
     return $results | Sort-Object NumCpu
 }
 
@@ -192,7 +222,7 @@ function CompareBeforeAfter($vmhosts) {
         }
     }
     #Display before/after details
-    $results | Sort-Object AfterMemoryGB -Descending | Format-Table -AutoSize
+    #$results | Sort-Object AfterMemoryGB -Descending | Format-Table -AutoSize
 }
 
 function vMotionVM($vmstomove,$vm) {
@@ -209,16 +239,24 @@ function vMotionVM($vmstomove,$vm) {
 }
 
 #Choose a random VM and move it to it's target VM Host. Exclusions can be set. If too many vMotions are running at once, wait till below threshold, then continue.
-function MigrateVMs($vmhosts) {
+function MigrateVMs {
+    [cmdletbinding()]
+    param (
+        $vmhosts,
+        $cluster,
+        [switch]$whatif = $false
+    )
     #Determine which VMs are going to move
     #$vmstomove = @()
     $vmstomove = @($vmhosts.vms | Where-Object{$_ -ne $null -and $_.name -notmatch $exclusions -and $_.targetvmhost -ne $null})
     if($vmstomove.Count -eq 0) {
-        Write-Host "No VMs to balance."
+        #Write-Host "[$cluster] No VMs to balance"
         return
     }
     Write-Host "There are $($vmstomove.count) VMs to vMotion to complete this balancing. Hit Enter to start balancing"
-    Read-Host
+    if($whatif -eq $true) {
+        Read-Host
+    }
 
     #Determine which VMs are not going to move because of exclusions and will need to be manually migrated
     $excludedvms = $vmhosts.vms | Where-Object{$_.name -match $exclusions -and $_.vmhost.name -ne $_.targetvmhost} | Sort-Object Name
@@ -274,18 +312,95 @@ function MoveVMDK {
     param (
         $VMDK,
         [Parameter(ParameterSetName="Datastore")]$DestinationDatastore,
-        [Parameter(ParameterSetName="DatastoreCluster")]$DestinationDatastoreCluster
+        [Parameter(ParameterSetName="DatastoreCluster")]$DestinationDatastoreCluster,
+        [Parameter(ParameterSetName="DatastoreCluster")][switch]$FillDatastoreFirst = $false,
+        [Parameter(Mandatory=$true)]$FillDatastorePercent
     )
 
+    $vmdkName = $vmdk.FileName
+    $destdatastore = $null
+
+    #Get destination datastore object
     switch($PSCmdlet.ParameterSetName) {
         "Datastore" { $destdatastore = Get-Datastore $DestinationDatastore }
-        "DatastoreCluster" { $destdatastore = Get-DatastoreCluster $DestinationDatastore | Get-Datastore | Sort-Object freespacegb -descending | Select-Object -first 1 }
+        "DatastoreCluster" {
+            #Get all datastores in datastore cluster
+            $clusterdatastores = @(Get-DatastoreCluster $DestinationDatastoreCluster | Get-Datastore)
+
+            #Get datastore for VMDK
+            $vmdkdatastore = $vmdk | Select-Object Filename,@{N="Datastore";E={$_.FileName.Split(']')[0].TrimStart('[')}} | %{ get-datastore $_.Datastore }
+
+            #Is the VMDK already on the datastore cluster?
+            if($clusterdatastores.Contains($vmdkdatastore)) {
+                Write-Host $vmdkname "VMDK already on $DestinationDatastoreCluster"
+                return
+            }
+
+            #Fill and Spill
+            if($FillDatastoreFirst) {
+                WriteLog $vmdkName "Trying to Fill and Spill"
+                #Get unique datastores for all VMDKs on parent VM
+                $vmdatastores = $vmdk.Parent | Get-HardDisk | Select-Object @{N="Datastore";E={$_.FileName.Split(']')[0].TrimStart('[')}} -Unique | %{ Get-Datastore $_.Datastore }
+
+                #Loop through the VM datastores...
+                foreach($_vmd in $vmdatastores) {
+                    #Is the VM datastore in the datastore cluster?
+                    if($clusterdatastores.Contains($_vmd)) {
+                        #Does the VM datastore have enough free space?
+                        $RequiredFreeGB = [math]::Round($_vmd.CapacityGB - ($_vmd.CapacityGB * ($FillDatastorePercent/100)),2)
+                        $AfterFreeGB = [math]::Round($_vmd.FreeSpaceGB - $vmdk.CapacityGB,2)
+                        if($AfterFreeGB -gt $RequiredFreeGB) {
+                            #The VMDK fits!
+                            WriteLog $vmdkName "Fits on $($_vmd.Name) with related VMDKs. After $AfterFreeGB GB is greater than required $RequiredFreeGB GB"
+                            $destdatastore = $_vmd
+                            break
+                        } else {
+                            #The VMDK doesn't fit
+                            WriteLog $vmdkName "Does not fit on $($_vmd.Name) with related VMDKs. After $AfterFreeGB GB is less than required $RequiredFreeGB GB"
+                        }
+                    } else {
+                        #The VM datastore isnt in the datastore cluster"
+                        WriteLog $vmdkName "$DestinationDatastoreCluster does not contain $($_vmd.Name)"
+                    }
+                }
+            }
+
+            #Spill and Fill
+            if($destdatastore -eq $null) {
+                WriteLog "$vmdkName" "Defaulting to Spill and Fill"
+                $destdatastore = Get-DatastoreCluster $DestinationDatastoreCluster | Get-Datastore | Sort-Object freespacegb -Descending | Select-Object -first 1
+                $RequiredFreeGB = [math]::Round($destdatastore.CapacityGB - ($destdatastore.CapacityGB * ($FillDatastorePercent/100)),2)
+                $AfterFreeGB = [math]::Round($destdatastore.FreeSpaceGB - $vmdk.CapacityGB,2)
+                if($AfterFreeGB -gt $RequiredFreeGB) {
+                    #The VMDK fits!
+                    WriteLog $vmdkName "Fits on $($destdatastore.Name). After $AfterFreeGB GB is greater than than required $RequiredFreeGB GB"
+                } else {
+                    #The VMDK doesn't fit
+                    WriteLog $vmdkName "Does not fit on $($destdatastore.Name). After $AfterFreeGB GB is less than required $RequiredFreeGB GB"
+                    $destdatastore = $null
+                }
+            }
+        }
     }
 
-    $vmdkcapacity = "{0:N2}" -f $vmdk.capacitygb
-    $destdatastorefree = "{0:N2}" -f $destdatastore.freespacegb
-    Write-Host "Migrating $($vmdk.filename)`($vmdkcapacity GB`) to $($destdatastore.name)`($destdatastorefree GB Free`)"
-    Move-HardDisk -HardDisk $vmdk -Datastore $destdatastore -RunAsync -Confirm:$false
+    #Lets do it!
+    if($destdatastore -ne $null) {
+        WriteLog $vmdkName "Destination datastore is $($destdatastore.Name)"
+        $vmdkcapacity = "{0:N2}" -f $vmdk.capacitygb
+        $destdatastorefree = "{0:N2}" -f $destdatastore.freespacegb
+        WriteLog $vmdkName "Moving `($vmdkcapacity GB`) to $($destdatastore.name)`($destdatastorefree GB Free`)"
+        
+        #Convert non-EagerZeroedThick to Thick
+        if($vmdk.StorageFormat -eq "EagerZeroedThick") {
+            $sFormat = "EagerZeroedThick"
+        } else {
+            $sFormat = "Thick"
+        }
+
+        Move-HardDisk -HardDisk $vmdk -Datastore $destdatastore -RunAsync -Confirm:$false -StorageFormat $sFormat | Out-Null
+    } else {
+        WriteLog $vmdkName "No adequate destination datastore found"
+    }
 }
 
 function GetHealth($h) {
@@ -306,8 +421,10 @@ function GetHealth($h) {
     }
 
     #calculate time difference between host and system this script is invoked from
-    $hosttimesystem = get-view $h.ExtensionData.ConfigManager.DateTimeSystem
-    $timedrift = ($hosttimesystem.QueryDateTime() - [DateTime]::UtcNow).TotalSeconds
+    $vcenter = Get-vCenterFromUID -uid $h.uid
+    $hosttimesystem = get-view $h.ExtensionData.ConfigManager.DateTimeSystem -Server $vcenter
+    $ntpUtcNow = Get-NtpTime -server time.domain.local -NoDns | Select-Object -ExpandProperty NtpTimeUtc
+    $timedrift = ($hosttimesystem.QueryDateTime() - $ntpUtcNow).TotalSeconds
     $results | Add-Member -Name "TimeDrift" -Value $timedrift -MemberType NoteProperty
     return $results
 }

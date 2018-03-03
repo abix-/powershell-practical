@@ -406,13 +406,15 @@ function Test-vCenter {
     $snaps = @($vms | Get-Snapshot)
     Write-Host "Snapshots: $($snaps.count)" -ForegroundColor $ForegroundColor -BackgroundColor $BackgroundColor
     Write-Output $snaps | Select-Object VM,Created,Description,SizeGB | Out-Default
+
+    Measure-DatastoreClusterCapacity
 }
 
 function Test-ESXiAccount {
     [cmdletbinding()]
     param (
         [Parameter(ValueFromPipeline=$true)]
-        [VMware.VimAutomation.ViCore.Impl.V1.Inventory.VMHostImpl]$VMHost,
+        [VMware.VimAutomation.ViCore.Types.V1.Inventory.VMHost]$VMHost,
         [string]$account = "admin"
     )
 
@@ -476,7 +478,6 @@ function Test-VMStorage {
         [string]$converted = ""
         foreach($_d in $deviceIDCharArray) { $converted += "{0:x}" -f ([byte][char]"$_d") }
         $Filter = $converted
-        write-debug "here"
     } else { $Filter = $Name -replace ":" }
 
     $selected = @($ds_inventory | Where-Object{$_."NAA.ID" -like "*$Filter*"})
@@ -503,36 +504,4 @@ function Test-VMStorage {
     Write-Host
     Write-Host "RDMs: Found $($rdm_selected.count) matching RDM(s)" -ForegroundColor Blue -BackgroundColor Gray
     if($rdm_selected.count -gt 0) { $rdm_selected  }
-}
-
-function Invoke-vSphereMonitor {
-    [cmdletbinding()]
-    param (
-        $vcenter,
-        $vrops
-    )
-
-    #connect to vcenter
-    #connect to vrops
-
-
-    #loop {
-
-    
-        #watch vsphere services
-
-        #get list of vms
-        #find health on vrops
-        #if health less than 100, investigate
-
-        #watch vmhosts
-
-    #}
-}
-
-function Invoke-WatchVMHealth {
-
-    #low disk space
-
-
 }

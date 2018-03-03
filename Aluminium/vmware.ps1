@@ -1,7 +1,6 @@
 function Set-VMHostAdvancedSetting {
     <#
     .SYNOPSIS
-    (1.0)
     Change the advanced settings for multiple vSphere VM Hosts.
     .DESCRIPTION
     Uses Get-AdvancedSetting and Set-AdvancedSetting to change the advanced setting.
@@ -35,7 +34,7 @@ function Set-VMHostAdvancedSetting {
 function Get-DatastoreDetails {
     <#
     .SYNOPSIS
-    (1.0)
+    Gets Capacity
     #>
     [cmdletbinding()]
     param (
@@ -57,7 +56,6 @@ function Get-DatastoreDetails {
         Write-Verbose "[$($_d.Name)] Processing datastore"
         $capgb = (($_d.Capacity)/1GB)
         $provgb = (($_d.Capacity – $_d.FreeSpace + $_d.Uncommitted)/1GB)
-        Write-Debug "hi"
         $results += [pscustomobject][ordered]@{
             Name = $_d.Name
             "CapacityGB" = "{0:N2}" -f $capgb
@@ -201,7 +199,7 @@ function Get-VMHostMetrics {
     $all | Sort-Object VMHost
     if($report -eq $true -and $all.count -gt 0) {
         $reportName += $vCenter
-        Export-Results -results $all -exportName $reportName 
+        Export-Results -results $all -exportName $reportName -excel
     }
 }
 
@@ -571,26 +569,29 @@ function Get-VMDetails {
                 }
             }
             $disks = $vm | Get-HardDisk
-            Write-Debug "hi"
             $results += [pscustomobject][ordered]@{
                 Name = $vm.Name
                 PowerState = $vm.PowerState
                 Cluster = ($vm | Get-Cluster).Name
-                NumCPU = $vm.NumCpu
-                MemoryGB = $vm.MemoryGB
-                Disks = $disks.count
-                AllocatedGB = ($disks | Measure-Object -Property CapacityGB -Sum).Sum
-                "NetworkType-1" = $NetworkType0
+                #VMHost = ($vm | Get-VMHost).Name
+                #DatastoreCluster = ( $vm | Get-DatastoreCluster).Name
+                #Datastore = ($VM | Get-datastore | select -first 1).Name
                 "NetworkLabel-1" = $NetworkLabel0
-                "IP-1" = $vm.Guest.IPAddress[0]
+                Folder = $vm.Folder.Name
+                NumCPU = $vm.NumCpu
+                MemoryGB = [math]::Round($vm.MemoryGB,2)
+                Disks = $disks.count
+                AllocatedGB = [math]::Round(($disks | Measure-Object -Property CapacityGB -Sum).Sum,2)
+                "NetworkType-1" = $NetworkType0
                 "NetworkType-2" = $NetworkType1
                 "NetworkLabel-2" = $NetworkLabel1
+                "IP" = $vm.Guest.IPAddress[0]
                 "IP-2" = $vm.Guest.IPAddress[1]
             }
         }
     }
     Write-Output $results
-    if($export) { Export-Results -Results $results -ExportName Get-VMDetails }
+    if($export) { Export-Results -Results $results -ExportName Get-VMDetails -excel }
 }
 
 function Get-VMDatastoreDetails {
@@ -621,10 +622,14 @@ function Get-VMDatastoreDetails {
         elseif($vms.count -gt 1) { Write-Warning "$($_s): Found $($vms.count) matching VMs" }
 
         foreach($vm in $vms) {
-            try { $VMDKs = $VM | Get-HardDisk -ErrorAction Stop }
+            try { 
+                $VMDKs = $VM | Get-HardDisk -ErrorAction Stop 
+                $VMView = $VM | Get-View
+            }
             catch { Write-Host "$($_s): Failed to get hard disks. Skipping." -ForegroundColor Red; Continue }
             if($VMDKs) {
 	            foreach ($VMDK in $VMDKs) {
+                    $Info = $VMView.Config.Hardware.Device | where {$_.GetType().Name -eq "VirtualDisk"} | where {$_.DeviceInfo.Label -eq $VMDK.Name}
 		            if ($VMDK -ne $null){
 			            $CapacityGB = $VMDK.CapacityKB/1024/1024
 			            $CapacityGB = [int]$CapacityGB
@@ -632,14 +637,21 @@ function Get-VMDatastoreDetails {
 			            $datastoreobject = Get-Datastore $datastore | Select-Object -First 1
                         $all += [pscustomobject][ordered]@{
 			                Name = $_s
+                            Cluster = ($vm | Get-Cluster).Name
+                            "Hard Disk" = $VMDK.Name
+                            "SCSI-Controller" = $info.ControllerKey
+                            "SCSI-ID" = $info.UnitNumber
                             VMDKFileName = $VMDK.Filename
                             VMDKPath = $VMDK.FileName.Split(']')[1].TrimStart('[ ')
                             VMDKCapacityGB = $CapacityGB
+                            VMDKType = $VMDK.DiskType
                             VMDKFormat = $VMDK.StorageFormat
 			                Datastore = $datastore
                             DatastoreCapacityGB = "{0:N2}" -f $datastoreobject.CapacityGB
                             DatastoreFreeGB = "{0:N2}" -f $datastoreobject.FreeSpaceGB
                             DatastoreFreePercent = "{0:N2}" -f (($datastoreobject.FreeSpaceGB/$datastoreobject.CapacityGB)*100)
+                            ScsiCanonicalName = $vmdk.ScsiCanonicalName
+                            DeviceName = $vmdk.DeviceName
                         }
 		            }
 	            }
@@ -647,7 +659,7 @@ function Get-VMDatastoreDetails {
         }
     }
     $all = $all | Sort-Object Name
-    if($export) { Export-Results -Results $all -ExportName Get-VMDatastoreDetails }
+    if($export) { Export-Results -Results $all -ExportName Get-VMDatastoreDetails -excel }
     else { Write-Output $all }
 }
 
@@ -703,7 +715,7 @@ function Get-SyslogSettings {
 
     #Export report
     if($export -eq $true) {
-        Export-Results -results $all -exportName $reportName
+        Export-Results -results $all -exportName $reportName -excel
     }
 }
 
@@ -976,43 +988,43 @@ function Get-DatastoreInventory {
     if($rdm_inventory.Count -gt 0) { Export-Results -results $rdm_inventory -exportName RDM_Inventory }
 }
 
-function Get-VMHostFirmware {
+function Get-HBAFirmware {
     [cmdletbinding()]
     param (
-        $Name = "",
-        $Parent,
+        [Parameter(Mandatory=$true,ValueFromPipeline=$true)][VMware.VimAutomation.ViCore.Types.V1.Inventory.VMHost]$VMHost,
         $Driver = "lpfc"
     )
-    #Test-ConnectedvCenter
-    if($Parent) {
-        $ParentObj = Get-VIObject -Name $Parent
-        $ParentvCenter = $ParentObj.UID | Where-Object{$_ -match "@(?<vcenter>.*):443"} | ForEach-Object{$matches['vcenter']}
-        $vmhosts = @(Get-View -Server $ParentvCenter -ViewType HostSystem -SearchRoot $ParentObj.ExtensionData.MoRef -Filter @{"Name"="$Name"})
-        Write-Verbose "[$Name] Found $($vmhosts.count) VMHosts in $ParentvCenter\$Parent"
-    } else {
-        $vmhosts = @(Get-View -ViewType HostSystem -Filter @{"Name"="$Name"})
-        Write-Verbose "[$Name] Found $($vmhosts.count) VMHosts"
-    }
 
-    $results = @()
-    foreach($_v in ($vmhosts | Where-Object{$_.Runtime.ConnectionState -ne "notResponding"} | Sort-Object Name)) {
-        $i++
-        Write-Progress -Activity "Reading data from $($_v.Name)" -Status "[$i/$($vmhosts.count)]" -PercentComplete (($i/$vmhosts.count)*100)
-        $esxcli = Get-EsxCLI -VMHost $_v.Name
-        $nics = @($esxcli.network.nic.list())
-        $nic0_details = @($esxcli.network.nic.get($nics[0].Name))
-        $lpfc = @()
-        write-debug "hi"
-        $results += [pscustomobject][ordered]@{
-            VMHost = $_v.Name
-            NIC_Count = $nics.count
-            NIC_Name = $nics[0].Description
-            FCoE_Driver = ($esxcli.system.module.get($Driver)).Version
-            FCoE_Firmware = $nic0_details.DriverInfo.FirmwareVersion
-            NIC_Driver = $nic0_details.driverinfo.Version
+    process {
+        if($VMHost.ConnectionState -eq "Connected" -or $VMHost.ConnectionState -eq "Maintenance") {
+            Write-Verbose "[$($VMHost.Name)] Getting Firmware data"
+
+            #Get data from ESXCLI
+            $esxcli = Get-EsxCLI -VMHost $VMHost.Name -v2
+            $nics = @($esxcli.network.nic.list.invoke())
+
+            #Nic0
+            $nicArgs = $esxcli.network.nic.get.createArgs()
+            $nicArgs.nicname = $nics[0].name
+            $nic0 = @($esxcli.network.nic.get.Invoke($nicArgs))
+
+            #FCoE
+            $fcoeArgs = $esxcli.system.module.get.createArgs()
+            $fcoeArgs.module = $Driver
+            $fcoe = $esxcli.system.module.get.Invoke($fcoeArgs)
+
+            [pscustomobject][ordered]@{
+                VMHost = $VMHost.Name
+                NIC_Count = $nics.count
+                FCoE_Driver = $fcoe.Version
+                FCoE_Firmware = $nic0.DriverInfo.FirmwareVersion
+                NIC_Driver = $nic0.driverinfo.Version
+                NIC_Name = $nics[0].Description
+            }
+        } else {
+            Write-Host "[$($VMHost.Name)] VMHost is not Connected or in Maintenance Mode"
         }
     }
-    Write-Output $results | Format-Table
 }
 
 function Get-VM_PortGroup_Mapping {
@@ -1046,11 +1058,15 @@ function Optimize-ClusterBalance {
     Param (
         [Parameter(Mandatory=$true)]$cluster,
         $style = "Quick",
-        $constraint = "RAM",
+        $constraint = "vRAM",
         $exclusions = "(AVAMARPROXY.*|-CRITICALSERVER.*)",
-        $vmotionlimit = 4,
+        $vmotionlimit = 3,
         [switch]$whatif = $true
     )
+
+    if($cluster -eq "all") {
+        $cluster = @(get-cluster | select -expand name)
+    }
 
     foreach($c in $cluster) {
         #Group the VMs into Types
@@ -1061,7 +1077,7 @@ function Optimize-ClusterBalance {
             "Quick" { $vmhosts = BalanceQuick $c $types $constraint }
         }
         CompareBeforeAfter $vmhosts 
-        MigrateVMs $vmhosts
+        MigrateVMs -VMHosts $vmhosts -Cluster $c -WhatIf:$whatif
     }
 }
 
@@ -1248,7 +1264,7 @@ Function Set-UsbDevice {
 function Invoke-HostMath {
     param (
         [Parameter(ValueFromPipeLine=$True)]
-        [VMware.VimAutomation.Types.VirtualMachine[]]$vm,
+        [VMware.VimAutomation.ViCore.Types.V1.Inventory.VirtualMachine[]]$vm,
         $label,
         $reportCSV = "C:\Scripts\Reports\HostMath.csv",
         [switch]$export = $false
@@ -1414,7 +1430,6 @@ function Import-1000v {
             $pg_name = $_pg.PortGroup
             if(@($vdsCurrentpgs | Where-Object{$_.Name -eq $pg_name}).count -eq 0) {
                 WriteLog "$vdsname" "$pg_name does not exist. Creating"
-                write-debug "here"
                 New-VDPortgroup -VDSwitch $vds_obj -Name $pg_name -VlanId $_pg.VLANID -NumPorts 256
             } else {
                 WriteLog "$vdsname" "$pg_name already exists. Skipping"
@@ -1458,7 +1473,6 @@ function Import-VCRoles {
     $roles_obj = Get-VIRole
 
     foreach($_id in $roles_ids) {
-        if($_id -eq 587203261) { Write-Debug "here" }
         $role_privs_new = $privs | Where-Object{$_.RoleID -eq $_id}
         if([int]$_id -lt 5000) {
             $role_name = $role_privs_new[0].Role
@@ -1684,7 +1698,6 @@ function Start-MigrationMonitor {
                     switch($test) {
                         "IP" {
                             $vm = Get-VM $server.Server -ErrorAction SilentlyContinue
-                            write-debug "wtf"
                             #Get the last IPv4 address
                             if($vm) { $arglist = @($vm.Guest.IPAddress | Where-Object{$_ -notlike "*:*" -and $_ -notlike "169.*"} | Select-Object -Last 1) } 
                             else { $arglist = @($null) }
@@ -1725,7 +1738,7 @@ function Start-MigrationMonitor {
 function Get-VMGuestNetwork {
     [cmdletbinding()]
     param (
-        [Parameter(Mandatory=$true)][VMware.VimAutomation.Types.VirtualMachine]$VM,
+        [Parameter(Mandatory=$true)][VMware.VimAutomation.ViCore.Types.V1.Inventory.VirtualMachine]$VM,
         [Parameter(Mandatory=$true)][string]$GuestUser,
         [Parameter(Mandatory=$true)][string]$GuestPassword 
     )
@@ -1750,7 +1763,7 @@ function Get-VMGuestNetwork {
 function Set-VMGuestNetwork {
     [cmdletbinding()]
     param (
-        [Parameter(Mandatory=$true)][VMware.VimAutomation.Types.VirtualMachine]$vm,
+        [Parameter(Mandatory=$true)][VMware.VimAutomation.ViCore.Types.V1.Inventory.VirtualMachine]$vm,
         [Parameter(Mandatory=$true)][string]$GuestUser,
         [Parameter(Mandatory=$true)][string]$GuestPassword,
         [string]$nicAlias,
@@ -1769,26 +1782,32 @@ function Start-DatastoreMigration {
         [Parameter(ParameterSetName="VM")]$SourceVM,
         [Parameter(ParameterSetName="Datastore")]$SourceDatastore,
         [Parameter(ParameterSetName="DatastoreCluster")]$SourceDatastoreCluster,
-        [Parameter(ParameterSetName="VMCluster")]$SourceVMCluster,
+        [Parameter(ParameterSetName="MigrationGroup")]$MigrationGroup,
+        $MigrationGroupFile = "Migration_Groups.xlsx",
         $DestinationDatastoreCluster,
         $DestinationDatastore,
-        $transferlimit = 2000,
-        $svmotionlimit = 1
+        $transferlimit = 100000,
+        $svmotionlimit = 2,
+        $FillDatastorePercent = 75,
+        $Confirm = $false
     )
 
     switch($PSCmdlet.ParameterSetName) {
         "VM" {
-            Write-Verbose "Getting VM objects"
-            if($SourceVM.EndsWith(".txt")) { $SourceVM = Get-Content $SourceVM }
-            $vmsObj = $SourceVM | ForEach-Object{Get-VM $_}
-        }
-        "VMCluster" {
-            $allvms = Get-Cluster $SourceVMCluster | get-vm | Sort-Object name
-            $destdatastores = Get-DatastoreCluster $destcluster | get-datastore | Select-Object -expand Name | Sort-Object
-            $vmsondatastore = @()
-            foreach($d in $destdatastores) { $vmsondatastore += get-vm -Datastore $d }
-            $tomove = Compare-Object $allvms $vmsondatastore -PassThru
-            $tomovesize = ($tomove | Measure-Object -Sum -Property UsedSpaceGB).sum
+            WriteLog "Prep" "Getting VM objects"
+            if($SourceVM.EndsWith(".txt")) {
+                if(Test-Path($SourceVM)) {
+                    $SourceVM = Get-Content "$SourceVM"
+                } else {
+                    $SourceVM = Get-Content "$PSScriptRoot\$SourceVM"
+                }
+            }
+            
+            $allVMs = Get-VM
+            $vmsObj = @()
+            foreach($_s in $SourceVM) {
+                $vmsObj += @($allVMs | ?{$_.Name -eq $_s}) 
+            }
         }
         "Datastore" {
             if($SourceDatastore.EndsWith(".txt")) { $SourceDatastore = @(Get-Content $SourceDatastore) }
@@ -1797,72 +1816,106 @@ function Start-DatastoreMigration {
         "DatastoreCluster" {
             $vmsObj = Get-DatastoreCluster $SourceDatastoreCluster | Get-Datastore | Get-VM | Sort-Object Name
         }
+        "MigrationGroup" {
+            if(Test-Path($MigrationGroupFile)) {
+                $MigrationGroups = Import-Excel $MigrationGroupFile
+            } else {
+                $MigrationGroups = Import-Excel "$PSScriptRoot\$MigrationGroupFile"
+            }
+            $thisMG = @($MigrationGroups | ?{$_."Migration Group" -eq $MigrationGroup})
+            
+            
+
+            $allVMs = Get-VM
+            $vmsObj = @()
+            foreach($_s in $thisMG) {
+                $vmsObj += @($allVMs | ?{$_.Name -eq $_s.Name}) 
+            }
+
+        }
     }
 
+    WriteLog "Prep" "Getting HardDisk objects"
     $disks = $vmsObj | Get-HardDisk
-    if($DestinationDatastoreCluster) { $dest = $DestinationDatastoreCluster }
+    if($DestinationDatastoreCluster) { 
+        $dest = $DestinationDatastoreCluster 
+        $destDatastores = Get-DatastoreCluster $dest | Get-Datastore
+    }
     elseif($DestinationDatastore) { $dest = $DestinationDatastore }
     else { 
-        Write-Host "Destination required" 
+        WriteLog "Prep" "Destination required" 
         Return
     }
 
-    $vms = @()
+    $vmdks = @()
     foreach($_d in $disks) {
         $dsName = $_d.FileName.Split(']')[0].TrimStart('[')
-        #If migrating from a SourceDatastore, only migrate VMDKs frpm the SourceDatastore
         if($SourceDatastore) {
+            #If migrating from a SourceDatastore, only migrate VMDKs from the SourceDatastore
             if($SourceDatastore -contains $dsName) {
-                Write-Verbose "Adding $($_d.Filename)"
-                $vms += $_d
+                WriteLog "Plan" "Adding $($_d.Filename) to VMDK list"
+                $vmdks += $_d
             } else {
-                Write-Verbose "Skipping $($_d.Filename)"
+                WriteLog "Plan" "Skipping $($_d.Filename)"
             }
+        } elseif($DestinationDatastoreCluster -and $destDatastores.Name.Contains($dsname)) {
+            #If migrating to a DestinationDatastoreCluster, only migrate VMDKs which aren't already on the datastore cluster
+            WriteLog "Plan" "Skipping $($_d.Filename). Already on $DestinationDatastoreCluster"
         } else {
-            if($dsName -notlike "*Standard*") {
-                Write-Verbose "Adding $($_d.Filename)"
-                $vms += $_d
-            }
+            WriteLog "Plan" "Adding $($_d.Filename) to VMDK list"
+            $vmdks += $_d
         }
     }
                
-    Write-Verbose "Add smallests VMDKs to migrate"           
+    WriteLog "Plan" "Finding smallests VMDKs to migrate"           
     $tomove = @(); $tomovesize = 0
-    $vms = $vms | Sort-Object CapacityGB; $i = 0
-    while($tomovesize -lt $transferlimit -and $i -lt $vms.count) {
-        $smallvmdk = $vms[$i]
-        $smallvmdkused = $smallvmdk.CapacityGB
-        if(($smallvmdkused.CapacityGB + $tomovesize) -lt $transferlimit) { 
-            Write-Verbose "$($smallvmdk.filename): $smallvmdkused GB VMDK added to queue";
-            $vms = $vms | Where-Object{$_ -ne $smallvmdk}; $tomove += $smallvmdk
-        } else { break }
+    $vmdks = $vmdks | Sort-Object CapacityGB; $i = 0
+    while($tomovesize -lt $transferlimit -and $i -lt $vmdks.count) {
+        $smallvmdk = $vmdks[$i]
+        $smallvmdkused = [math]::Round($smallvmdk.CapacityGB,2)
+        if(($smallvmdkused + $tomovesize) -lt $transferlimit) { 
+            WriteLog "Plan" "$($smallvmdk.filename): $smallvmdkused GB VMDK added to queue"
+            $tomove += $smallvmdk
+        } else { 
+            WriteLog "Plan" "Transfer limit $transferlimit GB reached"
+            break 
+        }
         $tomovesize = ($tomove | Measure-Object -Sum -Property CapacityGB).sum; $i++
     }
 
-    Write-Host "$("{0:N2}" -f $tomovesize) GB in $($tomove.count) VMDKs will be migrated $svmotionlimit at a time to $dest"
-    $tomove | Select-Object Parent,Filename,CapacityGB | Sort-Object Parent
-    $option = Read-Host "continue, exit"
-    switch($option) {
-        "continue" { }
-        "c" { }
-        "exit" { Exit }
-        default { Exit }
+    WriteLog "Verify" "$("{0:N2}" -f $tomovesize) GB in $($tomove.count) VMDKs will be migrated $svmotionlimit at a time to $dest"
+    $tomove | Select-Object Parent,Filename,CapacityGB | Out-Default
+    
+    if($confirm -ne $true) {
+        $option = Read-Host "continue, exit"
+        switch($option) {
+            "continue" { }
+            "c" { }
+            "exit" { Exit }
+            default { Exit }
+        }
     }
 
-    foreach($vm in $tomove) {
+    foreach($vmdk in $tomove) {
         $success = $false
+        $w = 0
         while($success -ne $true) {
             $tasks = @(get-task -status Running | Where-Object{$_.name -like "*RelocateVM_Task*"})
             if($tasks.count -lt $svmotionlimit) {
                 if($DestinationDatastoreCluster) {
-                    MoveVMDK -vmdk $vm -DestinationDatastoreCluster $dest
+                    MoveVMDK -vmdk $vmdk -DestinationDatastoreCluster $dest -FillDatastoreFirst:$true -FillDatastorePercent $FillDatastorePercent
                 } elseif($DestinationDatastore) {
-                    MoveVMDK -vmdk $vm -DestinationDatastore $dest
+                    MoveVMDK -vmdk $vmdk -DestinationDatastore $dest -FillDatastorePercent $FillDatastorePercent
                 }
                 $success = $true
                 Start-Sleep -Seconds 5
             } else {
-                Write-Verbose "Sleeping for 15 seconds"
+                $w++
+                if($w -eq 1) {
+                    WriteLog "Waiting for other svMotions" ""
+                } elseif($w -eq 4) {
+                    $w = 0
+                }
                 Start-Sleep -Seconds 15
             }
         }
@@ -1872,36 +1925,88 @@ function Start-DatastoreMigration {
 function Move-VMConfig {
     [cmdletbinding()]
     param (
-        [Parameter(ValueFromPipeline=$true)][VMware.VimAutomation.Types.VirtualMachine]$VM,
+        [Parameter(Position=0,ParameterSetName="VM")]$Name,
+        [Parameter(Position=0,ParameterSetName="MigrationGroup")]$MigrationGroup,
+        $MigrationGroupFile = "Migration_Groups.xlsx",
         $svMotionLimit = 1
     )
 
-    process {
+    switch($PSCmdlet.ParameterSetName) {
+        "VM" {
+            WriteLog "Prep" "Getting VM objects"
+            $vms = @()
+            if($Name.EndsWith(".txt")) {
+                if(Test-Path($Name)) {
+                    $VMList = Get-Content $Name
+                } else {
+                    $VMList = Get-Content "$PSScriptRoot\$Name"
+                }
+                $allVMs = Get-VM
+                foreach($_vm in $VMList) {
+                    $vms += @($allVMs | ?{$_.Name -eq $_vm}) 
+                } 
+            } else {
+                $VMs += Get-VM $Name
+            }
+        }
+
+        "MigrationGroup" {
+            if(Test-Path($MigrationGroupFile)) {
+                $MigrationGroups = Import-Excel $MigrationGroupFile
+            } else {
+                $MigrationGroups = Import-Excel "$PSScriptRoot\$MigrationGroupFile"
+            }
+            $thisMG = @($MigrationGroups | ?{$_."Migration Group" -eq $MigrationGroup})
+            
+            $allVMs = Get-VM
+            $vmsObj = @()
+            foreach($_s in $thisMG) {
+                $vms += @($allVMs | ?{$_.Name -eq $_s.Name}) 
+            }
+        }
+    }
+
+    foreach($vm in $vms) {
         $disk1 = Get-HardDisk -VM $vm | Select-Object -First 1
         $disk1ds = $disk1.FileName.Split(']')[0].TrimStart('[')
-        $destinationds = Get-Datastore -Name $disk1ds
-
-        $spec = New-Object VMware.Vim.VirtualMachineRelocateSpec
-        $spec.Datastore = $destinationds.Extensiondata.Moref
 
         $vm_vmx = ($vm.ExtensionData.LayoutEx.File | Where-Object{$_.Name -like "*.vmx"}).Name
         $vm_vmx_ds = $vm_vmx.Split(']')[0].TrimStart('[')
         if($vm_vmx_ds -ne $disk1ds) {
             $moveNeeded = $true
         } else {
-            Write-Host "[$($vm.Name)] Configuration files already on $disk1ds"
+            WriteLog "Prep" "[$($vm.Name)] Configuration files already on $disk1ds"
             $moveNeeded = $false
         }
 
         while($moveNeeded) {
-            $tasks = @(get-task -status Running | Where-Object{$_.name -like "*RelocateVM_Task*"})
+            $w = 0
+            $tasks = @(Get-Task | Where-Object{$_.name -like "*RelocateVM_Task*" -and $_.State -ne "success"})
             if($tasks.count -lt $svMotionLimit) {
-                Write-Host "[$($vm.Name)] svMotioning configuration files to $disk1ds"
+                WriteLog "Migration" "[$($vm.Name)] svMotioning configuration files from $vm_vmx_ds to $disk1ds"
+
+                $destinationds = Get-Datastore -Name $disk1ds
+
+                $spec = New-Object VMware.Vim.VirtualMachineRelocateSpec
+                $spec.Datastore = $destinationds.Extensiondata.Moref
+
+                Get-HardDisk -VM $vm | %{
+                    $disk = New-Object VMware.Vim.VirtualMachineRelocateSpecDiskLocator
+                    $disk.diskId = $_.Extensiondata.Key
+                    $disk.datastore = $_.Extensiondata.Backing.Datastore
+                    $spec.disk += $disk
+                }
+
                 $vm.ExtensionData.RelocateVM_Task($spec, "defaultPriority") | Out-Null
                 Start-Sleep -Seconds 5
-                return
+                break
             } else {
-                Write-Verbose "Sleeping for 15 seconds"
+                $w++
+                if($w -eq 1) {
+                    WriteLog "Waiting for other svMotions" ""
+                } elseif($w -eq 4) {
+                    $w = 0
+                }
                 Start-Sleep -Seconds 15
             }
         }
@@ -1911,7 +2016,7 @@ function Move-VMConfig {
 function Get-VMDisks {
     [cmdletbinding()]
     param (
-        [Parameter(ValueFromPipeline=$true)][VMware.VimAutomation.Types.VirtualMachine]$VM
+        [Parameter(ValueFromPipeline=$true)][VMware.VimAutomation.ViCore.Types.V1.Inventory.VirtualMachine]$VM
     )
 
     process {
@@ -1926,7 +2031,8 @@ function Get-VMDisks {
                     PowerState = $VM.PowerState
                     DiskFile = $VirtualDiskDevice.Backing.FileName
                     DiskName = $VirtualDiskDevice.DeviceInfo.Label
-                    DiskSize = $VirtualDiskDevice.CapacityInKB * 1KB
+                    DiskSizeKB = $VirtualDiskDevice.CapacityInKB * 1KB
+                    DiskSizeGB = $VirtualDiskDevice.CapacityInKB / 1024 / 1024
                     BusNumber = $VirtualSCSIController.BusNumber
                     UnitNumber = $VirtualDiskDevice.UnitNumber
                 }
@@ -1949,7 +2055,7 @@ function Expand-VMDisk {
     )
 
     begin {
-        $cred = Get-SecureStringCredentials -Username "DOMAIN\Username -Credentials
+        $cred = Get-SecureStringCredentials -Username "Dev\user.Dev" -Credentials
         $localcred = Get-SecureStringCredentials -Username "Administrator" -Credentials
         $localpass = Get-SecureStringCredentials -Username "Admin" -PlainPassword
     }
@@ -1977,13 +2083,15 @@ function Expand-VMDisk {
 }
 
 function Invoke-DisableDeleteCoredumpFile {
-    $vmhosts = get-vmhost
+    [cmdletbinding()]
+    param(
+        [Parameter(Mandatory=$true,ValueFromPipeline=$true)][VMware.VimAutomation.ViCore.Types.V1.Inventory.VMHost]$VMHost
+    )
 
-    foreach($vmhost in $vmhosts) {
+    process {
         Write-Host "[$($vmhost.Name)] Disabling & deleting coredump file"
         $esxcli = Get-EsxCli -VMHost $vmhost -V2
     
-
         $esxargs = $esxcli.system.coredump.file.set.CreateArgs()
         $esxargs.enable = $false
         $esxcli.system.coredump.file.set.Invoke($esxargs)
@@ -1997,7 +2105,7 @@ function Invoke-DisableDeleteCoredumpFile {
 function Get-VMHostAdvancedSetting {
     [cmdletbinding()]
     param(
-        [Parameter(Mandatory=$true,ValueFromPipeline=$true)][VMware.VimAutomation.Types.VMHost]$VMHost,
+        [Parameter(Mandatory=$true,ValueFromPipeline=$true)][VMware.VimAutomation.ViCore.Types.V1.Inventory.VMHost]$VMHost,
         [Parameter(Mandatory=$true)]$Name
     )
 
@@ -2009,7 +2117,7 @@ function Get-VMHostAdvancedSetting {
 function Set-VMHostAdvancedSetting {
     [cmdletbinding()]
     param(
-        [Parameter(Mandatory=$true,ValueFromPipeline=$true)][VMware.VimAutomation.Types.VMHost]$VMHost,
+        [Parameter(Mandatory=$true,ValueFromPipeline=$true)][VMware.VimAutomation.ViCore.Types.V1.Inventory.VMHost]$VMHost,
         [Parameter(Mandatory=$true)]$Name,
         [Parameter(Mandatory=$true)]$Value
     )
@@ -2037,7 +2145,7 @@ $esxi_hardening = @{
 function Get-VMHostHardening {
     [cmdletbinding()]
     param(
-        [Parameter(Mandatory=$true,ValueFromPipeline=$true)][VMware.VimAutomation.Types.VMHost]$VMHost
+        [Parameter(Mandatory=$true,ValueFromPipeline=$true)][VMware.VimAutomation.ViCore.Types.V1.Inventory.VMHost]$VMHost
     )
 
     process {
@@ -2056,7 +2164,7 @@ function Get-VMHostHardening {
 function Set-VMHostHardening {
     [cmdletbinding()]
     param(
-        [Parameter(Mandatory=$true,ValueFromPipeline=$true)][VMware.VimAutomation.Types.VMHost]$VMHost
+        [Parameter(Mandatory=$true,ValueFromPipeline=$true)][VMware.VimAutomation.ViCore.Types.V1.Inventory.VMHost]$VMHost
     )
 
     process {
@@ -2070,7 +2178,7 @@ function Set-VMHostHardening {
 function Measure-VMHostDatastores {
     [cmdletbinding()]
     param (
-        [Parameter(Mandatory=$true,ValueFromPipeline=$true)][VMware.VimAutomation.Types.VMHost]$VMHost
+        [Parameter(Mandatory=$true,ValueFromPipeline=$true)][VMware.VimAutomation.ViCore.Types.V1.Inventory.VMHost]$VMHost
     )
 
     process {
@@ -2165,10 +2273,10 @@ function New-SRMAlarms {
     }
 }
 
-function Get-StoragePaths {
+function Get-VMHostStoragePaths {
     $results = @()
     foreach($cluster in get-cluster | Sort-Object Name) {
-        foreach($vmhost in ($cluster | Get-VMHost  | Sort-Object Name)) {
+        foreach($vmhost in ($cluster | Get-VMHost  | ?{$_.ConnectionState -eq "Connected"} | Sort-Object Name)) {
             foreach($hba in (Get-VMHostHba -VMHost $vmhost -Type "FibreChannel" | Sort-Object Device)){
                  $target = ((Get-View $hba.VMhost).Config.StorageDevice.ScsiTopology.Adapter | Where-Object {$_.Adapter -eq $hba.Key}).Target
                  $luns = @(Get-ScsiLun -Hba $hba  -LunType "disk" -ErrorAction SilentlyContinue)
@@ -2189,6 +2297,26 @@ function Get-StoragePaths {
     }
 
     Export-Results -results $results -exportName StoragePaths
+}
+
+function Get-VMHostDatastoreCount {
+    [cmdletbinding()]
+    param (
+        [Parameter(Mandatory=$true,ValueFromPipeline=$true)][VMware.VimAutomation.ViCore.Types.V1.Inventory.VMHost]$VMHost
+    )
+
+    process {
+        if($VMHost.ConnectionState -eq "Connected" -or $VMHost.ConnectionState -eq "Maintenance") {
+            $datastores = $VMHost | Get-Datastore | Measure-Object
+            [pscustomobject][ordered]@{
+                Cluster = $VMHost.Parent.Name
+                VMHost = $VMHost.Name
+                Datastores = $datastores.Count
+            }
+        } else {
+            Write-Host "[$($_.Name)] Is not connected or in Maintenance Mode. Skipping"
+        }
+    }
 }
 
 function Invoke-FindVM {
@@ -2234,26 +2362,30 @@ function Invoke-FindVM {
 }
 
 function Set-VMHostLogDir {
-    foreach($_v in (get-vmhost | Sort-Object Name)) {
+    param (
+        [Parameter(Mandatory=$true,ValueFromPipeline=$true)][VMware.VimAutomation.ViCore.Types.V1.Inventory.VMHost]$VMHost
+    )
+
+    process {
         $template_ds = $null
-        $ds = get-datastore -vmhost $_v
-        $template_ds = $ds | Where-Object{$_.name -like "*template*"}
+        $ds = get-datastore -vmhost $VMHost
+        $template_ds = $ds | Where-Object{$_.name -like "*template_iso_*"} | Select-Object -First 1
         if($template_ds -ne $null) {
-            $shortname = $_v.name.Split(".")[0]
+            $shortname = $VMHost.name.Split(".")[0]
             $logdir = "[$($template_ds.name)] scratch/logs/.locker-$shortname"
 
-            $setting = Get-AdvancedSetting -Entity $_v -Name syslog.global.logdir
+            $setting = Get-AdvancedSetting -Entity $VMHost -Name syslog.global.logdir
             if($setting.Value -ne $logdir) {
                 Write-Host "[$shortname] setting syslog.global.logdir to $logdir"
                 Set-AdvancedSetting -AdvancedSetting $setting -Value $logdir -Confirm:$false
             } else {
                 Write-Host "[$shortname] syslog.global.logdir already set to $logdir"
             }
-        }
+        }  
     }
 }
 
-function Get-VMToolsHWStatus() {
+function Get-VMToolsHWStatus {
     [cmdletbinding()]
     param (
         [switch]$export = $false
@@ -2275,38 +2407,43 @@ function Get-VMToolsHWStatus() {
                 Folder = $folders | ?{$_.MoRef -eq $_v.Parent} | Select-Object -ExpandProperty Name
                 GuestOS = $_v.Config.GuestFullName
                 HWVersion = $_v.Config.Version
+                ToolsUpgradePolicy = $_v.Config.Tools.ToolsUpgradePolicy
                 ToolsVersion = SwitchGuestToolsVersion($_v.Guest.ToolsVersion)
+                ToolsVersion2 = $_v.Guest.ToolsVersion
                 ToolsStatus = $_v.Guest.ToolsStatus
+                ToolsStatus2 = $_v.Guest.ToolsVersionStatus2
             }
         }
     }
     
-    Write-Output $results 
+    #Write-Output $results 
     if($export) { Export-Results -results $results -exportName VM_HWTools_Status -excel }
 }
 
-function Invoke-VMToolsHardwareUpdate() {
+function Invoke-VMToolsHardwareUpdate {
     <#
     .PREREQUISITIES
     Assign a VMware Tools and VM Hardware Baseline in VM and Templates view
     Connect to vCenter with Connect-VIServer
     VMs must be Powered On
 
-    .HOWTOUSE
-    
-    .MANUAL ACTIONS
+    MANUAL EFFORT
     1. Find VM in VUM
     2. Scan for Updates
     3. Remediate VMware Tools. Wait
     4. Remediate Hardware Version. Wait
     5. Validate updated VMware Tools Version and Hardware Version
     6. Delete snapshots
-    Number of VMs to Update x 6
-    
-    .POWERSHELL ACTIONS
-    1. Run Invoke-VMToolsHardwareUpdate. Wait for prep
-    2. Type 'go'
-    3. Type 'cleanup'
+    Math: (Number of VMs to Update) x 6 = Effort
+    Example: 900 * 6 = 5400
+
+    .POWERSHELL EFFORT
+    1. Create list of VMs
+    2. Run Invoke-VMToolsHardwareUpdate. Wait for prep
+    3. Type 'go'
+    4. Type 'cleanup'
+    Math: (Number of RFCs) * 4 = Effort
+    Example: 12 * 4 = 48
     #>
     [cmdletbinding()]
     param (
@@ -2564,5 +2701,554 @@ function Invoke-VMToolsHardwareUpdate() {
         } else {
             $refreshneeded = $false
         }
+    }
+}
+
+function Get-VMGuestDiskInfo() {
+    <#
+    .SYNOPSISrea
+    Provides Guest Disk information for a VM
+    #>
+    [cmdletbinding(DefaultParameterSetName="Name")]
+    param (
+        [Parameter(ParameterSetName='Name',Mandatory=$true,Position=0)]$Name,
+        [Parameter(ParameterSetName='VM',ValueFromPipeline=$true,Mandatory=$true)]$VM,
+        $InfoScript = "$PSScriptRoot\GuestDiskInfo2.ps1",
+        [switch]$export
+    )
+
+    begin {
+        $localpass = Get-SecureStringCredentials -Username "Admin" -PlainPassword
+        $guestcred = Get-SecureStringCredentials -Username "DOMAIN\Username"
+        $allresults = @()
+        $script1 = Get-Content $InfoScript -Raw
+    }
+
+    process {
+        $results = @()
+        switch($PSCmdlet.ParameterSetName) {
+            "Name" {
+                try { $vm = Get-VM $Name -ErrorAction Stop }
+                catch { Write-Host $_.Exception.Message -ForegroundColor Red; Return }
+            }
+        }
+
+        if($vm.Guest.GuestFamily -ne "windowsGuest") {
+            Write-Host "[$($vm.name)] This is only supported on Windows VMs"
+            Return
+        }
+
+        #Use Get-CIMInstance through Invoke-VMScript to get the DriveLetters and Labels
+        $vmoutput = Invoke-VMScript -VM $vm -ScriptText $script1 -GuestCredential $guestcred -ScriptType Powershell
+        switch($vmoutput.ExitCode) {
+            0 { 
+                $volTab = @($vmoutput.ScriptOutput | ConvertFrom-Csv)
+                Write-Verbose "[$($vm.name)] Invoke-VMScript found $($volTab.count) disks"
+                #$voltab
+            }
+            default { Write-Host "[$($vm.name)] Invoke-VMScript returned Exit Code of $($vmoutput.ExitCode)"; Return }
+        }
+
+        $vmDatacenterView = $vm | Get-Datacenter | Get-View
+        $virtualDiskManager = Get-View -Id VirtualDiskManager-virtualDiskManager
+        #Populate results PSObject from Get-SCSiController and Get-HardDisk
+        foreach($ctrl in Get-ScsiController -VM $vm){
+            foreach($disk in (Get-HardDisk -VM $vm | where{$_.ExtensionData.ControllerKey -eq $ctrl.Key})){
+                $vmHardDiskUuid = $virtualDiskManager.queryvirtualdiskuuid($disk.Filename, $vmDatacenterView.MoRef) | foreach {$_.replace(' ','').replace('-','')}  
+                $results += [pscustomobject][ordered]@{
+                    VM = $vm.name
+                    DiskName = $disk.Name
+                    VMDK = $disk.Filename
+                    DriveLetter = ""
+                    Label = ""
+                    CapacityGB = ""
+                    FreeSpaceGB = ""
+                    HardDiskUUID = $vmHardDiskUuid
+                }
+            }
+        }
+
+        #Match the DriveLetter and Label from WMI to the results
+        foreach($_r in $results) {
+            $thisvol = @($volTab | ?{$_.SerialNumber -eq $_r.HardDiskUUID})
+            if($thisvol.count -eq 1) {
+                $_r.DriveLetter = $thisvol.DriveLetter
+                $_r.Label = $thisvol.Label
+            } elseif($thisvol.count -gt 1) {
+                Write-Host "[$($vm.name)] More than one WMI volume matches serial number $($_r.HardDiskUUID). Skipping DriveLetter, Label, Capacity, and FreeSpace"
+            } else {
+                Write-Host "[$($vm.name)] Cannot find WMI volume for '$($_r.DiskName)' '$($_r.HardDiskUUID)'. Skipping DriveLetter, Label, Capacity, and FreeSpace"
+            }
+        }
+
+        #Match the CapacityGB and FreeSpaceGB from Get-VMGuest to the results
+        $guestdisks = @($vm | Get-VMGuest | Select-Object -ExpandProperty Disks)
+        foreach($_r in $results) {
+            #If the DriveLetter was previously determined
+            if($_r.DriveLetter -ne "") {
+                $thisdisk = @($guestdisks | ?{$_.Path -eq "$($_r.DriveLetter)\"})
+                if($thisdisk.count -eq 1) {
+                    $_r.CapacityGB = ("{0:N2}" -f $thisdisk.CapacityGB)
+                    $_r.FreeSpaceGB = ("{0:N2}" -f $thisdisk.FreeSpaceGB)
+                } elseif($thisdisk.count -gt 1) {
+                    Write-Host "[$($vm.name)] More than one Get-VMGuest Disk matches $($_r.DriveLetter). Skipping CapacityGB and FreeSpaceGB"
+                } else {
+                    Write-Host "[$($vm.name)] No Get-VMGuest Disk found at $($_r.DriveLetter). Skipping CapacityGB and FreeSpaceGB"
+                }
+            }
+        }
+        
+        $allresults += $results
+    }
+
+    end {
+        #Write-Output $allresults
+        if($export) { Export-Results -results $allresults -exportName Get-VMGuestDiskInfo -excel }
+    }
+}
+
+function Invoke-CreateServiceCrontab {
+    [cmdletbinding()]
+    param (
+        $VM,
+        $Password
+    )
+
+    if(!$Password) {
+        $password = Read-Host "Password"
+    }
+
+    try { 
+        $results = Invoke-VMScript -VM $VM -ScriptText "crontab -l | grep '/sbin/chkconfig' || (crontab -l | grep -v '#' ; echo '*/5 * * * * /sbin/chkconfig > /tmp/service-status.txt; chmod o+r /tmp/service-status.txt')| crontab -" -GuestUser "root" -GuestPassword $password -ErrorAction Stop | Select-Object -ExpandProperty ScriptOutput
+    }
+    catch {
+        Write-Host $_.Exception.Message -ForegroundColor Red
+        Return "Error"
+    }
+
+    return $results
+}
+
+function Invoke-CreateServiceCrontab2 {
+    [cmdletbinding()]
+    param (
+        $VM,
+        $Password
+    )
+
+    if(!$Password) {
+        $password = Read-Host "Password"
+    }
+
+    try { 
+        $results = Invoke-VMScript -VM $VM -ScriptText "crontab -l | grep '/sbin/service' || (echo '*/5 * * * * /sbin/service --status-all > /tmp/service-status.txt; chmod o+r /tmp/service-status.txt')| crontab -" -GuestUser "root" -GuestPassword $password -ErrorAction Stop | Select-Object -ExpandProperty ScriptOutput
+    }
+    catch {
+        Write-Host $_.Exception.Message -ForegroundColor Red
+        Return "Error"
+    }
+
+    return $results
+}
+
+function Get-VMGuestAdapterRSS {
+    [cmdletbinding()]
+    param (
+        [Parameter(ValueFromPipeline=$true)][VMware.VimAutomation.ViCore.Types.V1.Inventory.VirtualMachine]$VM,
+        [Parameter(Mandatory=$true)][string]$GuestUser,
+        [Parameter(Mandatory=$true)][string]$GuestPassword 
+    )
+
+    $vmoutput = Invoke-VMScript -ScriptText 'Get-NetAdapterRSS | Select SystemName,InterfaceAlias,ifDesc,Enabled | ConvertTo-CSV' `
+                -ScriptType Powershell -VM $vm -GuestUser $GuestUser -GuestPassword $GuestPassword
+
+    if($vmoutput.ExitCode -eq 0) {
+        $adapters = @($vmoutput.ScriptOutput | ConvertFrom-Csv)
+        Write-Output $adapters        
+    } else {
+        Write-Host "[$($vm.name)] Invoke-VMScript returned Exit Code of $($vmoutput.ExitCode)"
+        Return
+    }
+}
+
+function Get-VMInventory {
+    [cmdletbinding()]
+    param (
+        [switch]$export,
+        [string]$exportName = "VM_Inventory"
+    )
+
+    $vms = Get-VM | Sort Name
+
+    $results = @()
+    foreach($_v in $vms) {
+        Write-Host "Processing $($_v.Name)"
+        $results += [pscustomobject][ordered]@{
+            VM = $_v.Name
+            Cluster = ($_v | Get-Cluster).Name
+            PowerState = $_v.PowerState
+            "IPAddress-1" = $_v.Guest.IPAddress[0]
+        }
+    }
+
+    if($export -eq $true -and $results.count -gt 0) {
+        Export-Results -results $results -exportName $exportName 
+    }
+}
+
+function Invoke-DefragDatastoreCluster {
+    [cmdletbinding()]
+    param (
+        $DatastoreCluster,
+        [int]$DatastoreFillPercent = 83,
+        [int]$CloseEnough = 50,
+        [int]$svMotionLimit = 1
+    )
+
+    #80% DatastoreFillPercent == 1229 GB Preferred
+    #83% DatastoreFillPercent == 1044 GB Preferred
+
+    if($DatastoreCluster -eq "all") {
+        #Disable-KeepVMDKsTogether all
+        $DatastoreCluster = @(get-datastorecluster | Select-Object -expand name)
+    }
+
+    foreach($_DSC in $datastoreCluster) {
+        #Get Datastores and VMs for Datastore Cluster
+        Write-Host "[$_DSC] Getting Datastores and VMs"
+        $DSs = @(Get-DatastoreCluster -Name $_DSC | Get-Datastore -Refresh | Sort Name)
+        
+        #Get-VM | Where-Object {$_.PowerState –eq “PoweredOn”} | Get-CDDrive | FT Parent, IsoPath
+        $VMs = @(Get-DatastoreCluster -Name $_DSC | Get-VM | ?{ $_ | Get-CDDrive | ?{ $_.ConnectionState.Connected -eq $false}})
+
+        $DSCount = 0
+        :WorkWork do {
+            #Get a refreshed datastore object
+            $_ds = Get-Datastore -Name $DSs[$DSCount].Name -Refresh
+        
+            #Math
+            $PreferredFreeGB = [math]::Round($_ds.CapacityGB - ($_ds.CapacityGB * ($DatastoreFillPercent/100)),0)
+            $diff = $_ds.FreeSpaceGB - $PreferredFreeGB
+
+            #If the datastore has free space and the difference is greather than 50GB
+            if($_ds.FreeSpaceGB -gt $PreferredFreeGB -and $diff -gt $CloseEnough) {
+                WriteLog $_ds.Name "FreeGB $([math]::Round($_ds.FreeSpaceGB,0))GB greater than PreferredGB $PreferredFreeGB`GB"
+
+                #Get Hard Disks for all VMs in the Datastore Cluster
+                Write-Verbose "$($_ds.Name) Getting Hard Disks on VMs"
+                $HDs = @($VMs | Get-HardDisk -DiskType Flat)
+
+                #Get possible HDs from other datastores
+                $donorDSNames = @($DSs | Select-Object -Skip ($DSCount+1) -ExpandProperty Name | Sort-Object -Descending)
+                $donorHds = @()
+                foreach($_donor in $donorDSNames) {
+                    $donorHDs += @($HDs | ?{$_.Filename -like "*$_donor*"})
+                }
+                $donorHds = $donorHds | Sort-Object -Property CapacityGB -Descending
+            
+                #Check to see if moving the hard disk wont exceed PreferredFreeGB
+                foreach($_hd in $donorHDs) {
+                    $AfterFreeGB = [math]::Round($_ds.FreeSpaceGB - $_hd.CapacityGB,0)
+                    if($AfterFreeGB -gt $PreferredFreeGB) {
+                        do {
+                            $success = $false
+                            $tasks = @(get-task | Where-Object{$_.name -like "*RelocateVM_Task*" -and $_.state -ne "Success"})
+                            if($tasks.count -lt $svMotionLimit) {
+                                WriteLog $_ds.Name "Moving $($_hd.CapacityGB) GB $($_hd.Filename). After svMotion:$AfterFreeGB GB Free"
+                                Move-HardDisk -HardDisk $_hd -Datastore $_ds -Confirm:$false | Out-Null
+                                $success = $true
+                            } else {
+                                Write-Host "Waiting for other svMotions"
+                                Start-Sleep -Seconds 60
+                            }
+                        } while ($success -ne $true)
+                    
+                        continue WorkWork
+                    } else {
+                        Write-Verbose "Moving $($_hd.FileName) with $($_hd.CapacityGB) GB will not work. $AfterFreeGB is less than $PreferredFreeGB"
+                    }
+                }
+                Write-Host "[$($_ds.Name)] No defrag possible"
+            } else {
+                WriteLog $_ds.Name "Datastore is nominal"
+            }
+            $DSCount = $DSCount + 1
+        } while ($DSCount -lt $DSs.Count)
+    }
+
+    if($DatastoreCluster -eq "all") {
+        #Disable-KeepVMDKsTogether all
+    }
+}
+
+function Test-VMHostIODevice {
+    [cmdletbinding()]
+    param (
+        [parameter(ValueFromPipeline=$True)]$Input,
+        [switch]$export
+    )
+
+    #650FLB: Emulex Corporation Emulex OneConnect OCe14000, FCoE Initiator
+    #554FLB & 554M: ServerEngines Corporation Emulex OneConnect OCe11100 FCoE Initiator
+    #534M not seen
+    #$StorageControllers = @($VMHost| Get-VMHostPciDevice -DeviceClass SerialBusController | ?{$_.Name -notlike "*intel*" -and $_.Name -notlike "*hewlett-packard*"})
+
+    #650FLB: Emulex Corporation HP FlexFabric 20Gb 2-port 650FLB Adapter
+    #554FLB: Emulex Corporation HP FlexFabric 10Gb 2-port 554FLB Adapter
+    #554M: Emulex Corporation HP FlexFabric 10Gb 2-port 554M Adapter
+    #534M: Broadcom Corporation QLogic 57810 10 Gigabit Ethernet Adapter
+    #$NetworkControllers = @($VMHost | Get-VMHostPciDevice | ?{$_.DeviceClass -eq "NetworkController"})
+
+    #load the latest file
+    if(!$Input) {
+        $input = Get-ChildItem "$global:ReportsPath\*.xlsx" | Where-Object{$_.name -like "Get-VMHostIODevice*"} | Sort-Object LastWriteTime -Descending | Select-Object -First 1 | Import-Excel        #$Input = Import-Excel "\\path\to\file"
+    }
+
+    $results = @()
+    $steps = @()
+    #Check the NICs
+    foreach($nic in @($Input | ?{$_.VMKernel -match "(vmnic.*|vmhba.*)"})) {
+        $FWVersionState = "N/A"
+        switch($nic.Device) {
+            #FCoE: 650FLB
+            "Emulex OneConnect OCe14000, FCoE Initiator" {
+                #Check driver
+                $wanted = "11.1.183.633"
+                if($nic."Driver Version" -like "*$wanted*") {
+                    $DriverVersionState = "Pass"
+                } else {
+                    $DriverVersionState = "Fail"
+                    $steps += "[$($nic.VMHost)] Update lpfc driver from $($nic."Driver Version") to $wanted with VUM"
+                }
+            }
+
+            #FCoE: 554FLB and 554M
+            "Emulex OneConnect OCe11100 FCoE Initiator" {
+                #Check driver
+                $wanted = "11.1.183.633"
+                if($nic."Driver Version" -like "*$wanted*") {
+                    $DriverVersionState = "Pass"
+                } else {
+                    $DriverVersionState = "Fail"
+                    $steps += "[$($nic.VMHost)] Update lpfc driver from $($nic."Driver Version") to $wanted with VUM"
+                }
+            }
+
+            #Network: 650FLB
+            "HP FlexFabric 20Gb 2-port 650FLB Adapter" {
+                #Check driver
+                $wanted = "11.1.145.0"
+                if($nic."Driver Version" -like "*$wanted*") {
+                    $DriverVersionState = "Pass"
+                } else {
+                    $DriverVersionState = "Fail"
+                    $steps += "[$($nic.VMHost)] Update elxnet driver from $($nic."Driver Version") to $wanted with VUM"
+                }
+
+                #Check firmware
+                $wanted = "11.1.183.62"
+                if($nic."Firmware Version" -eq $wanted) {
+                    $FWVersionState = "Pass"
+                } else {
+                    $FWVersionState = "Fail"
+                    $steps += "[$($nic.VMHost)] Update 650FLB firmware from $($nic."Firmware Version") to $wanted with SPP 2017.04.0"
+                }
+            }
+
+            #Network: 554FLB
+            "HP FlexFabric 10Gb 2-port 554FLB Adapter" {
+                #Check driver
+                $wanted = "11.1.145.0"
+                if($nic."Driver Version" -like "*$wanted*") {
+                    $DriverVersionState = "Pass"
+                } else {
+                    $DriverVersionState = "Fail"
+                    $steps += "[$($nic.VMHost)] Update elxnet driver from $($nic."Driver Version") to $wanted with VUM"
+                }
+
+                #Check firmware
+                $wanted = "11.1.183.23"
+                if($nic."Firmware Version" -eq $wanted) {
+                    $FWVersionState = "Pass"
+                } else {
+                    $FWVersionState = "Fail"
+                    $steps += "[$($nic.VMHost)] Update 554FLB firmware $($nic."Firmware Version") to $wanted with SPP 2017.04.0"
+                }
+            }
+
+            #Network: 554M
+            "HP FlexFabric 10Gb 2-port 554M Adapter" {
+                #Check driver
+                $wanted = "11.1.145.0"
+                if($nic."Driver Version" -like "*$wanted*") {
+                    $DriverVersionState = "Pass"
+                } else {
+                    $DriverVersionState = "Fail"
+                    $steps += "[$($nic.VMHost)] Update elxnet driver from $($nic."Driver Version") to $wanted with VUM"
+                }
+
+                #Check firmware
+                $wanted = "11.1.183.23"
+                if($nic."Firmware Version" -eq $wanted) {
+                    $FWVersionState = "Pass"
+                } else {
+                    $FWVersionState = "Fail"
+                    $steps += "[$($nic.VMHost)] Update 554M firmware from $($nic."Firmware Version") to $wanted with SPP 2017.04.0"
+                }
+            }
+
+            #Network: 534M
+            "QLogic 57810 10 Gigabit Ethernet Adapter" {
+                #Check driver
+                $wanted = "2.713.10.v60.4"
+                if($nic."Driver Version" -like "*$wanted*") {
+                    $DriverVersionState = "Pass"
+                } else {
+                    $DriverVersionState = "Fail"
+                    $steps += "[$($nic.VMHost)] Update bnx2x driver from $($nic."Driver Version") to $wanted with VUM"
+                }
+
+                #Check firmware
+                $wanted = "bc 7.13.75"
+                if($nic."Firmware Version" -eq $wanted) {
+                    $FWVersionState = "Pass"
+                } else {
+                    $FWVersionState = "Fail"
+                    $steps += "[$($nic.VMHost)] Update 534M firmware from $($nic."Firmware Version") to $wanted with SPP 2017.04.0"
+                }
+            }
+
+            default {
+                $FWVersionState = "Error"
+                $DriverVersionState = "Fail"
+            }
+        }
+
+        $results += [pscustomobject][ordered]@{
+            Cluster = $nic.Cluster
+            VMHost = $nic.VMHost
+            Device = $nic.Device
+            "FW Version" = $nic."Firmware Version"
+            "FW State" = $FWVersionState
+            Driver = $nic.Driver
+            "Driver Version" = $nic."Driver Version"
+            "Driver State" = $DriverVersionState
+        }
+    }
+
+    #Filter out duplicates
+    $results = $results | Select Cluster,VMHost,Device,"FW Version","FW State",Driver,"Driver Version","Driver State" -Unique
+    Write-Output $results
+
+    #List the steps needed for remediation
+    $steps | Select -Unique | %{ Write-Host $_ }
+    
+    if($export) { Export-Results -Results $results -ExportName Test-VMHostIODevices -excel }
+}
+
+function Invoke-CleanVMHostCoreDump {
+    [cmdletbinding()]
+    param (
+        [Parameter(Mandatory=$true,ValueFromPipeline=$true)][VMware.VimAutomation.ViCore.Types.V1.Inventory.VMHost]$VMHost
+    )
+
+    process {
+        $esxcli = Get-EsxCli -VMHost $VMHost.Name -V2
+        $shortName = $VMHost.Name.Split(".")[0]
+
+        #Delete old dumpfiles
+        $dumpfiles = $esxcli.system.coredump.file.list.invoke() | ?{$_.Path -notlike "*VMName"}
+        foreach($dumpfile in $dumpfiles) {
+            Write-Host "Removing $($dumpfile.Path)"
+            $dumpArgs = $esxcli.system.coredump.file.remove.CreateArgs()
+            $dumpArgs.file = $dumpfile.Path
+            $dumpArgs.force = $true
+            $esxcli.system.coredump.file.remove.Invoke($dumpArgs)
+        }
+    }
+}
+
+function Set-VMHostCoreDump {
+    [cmdletbinding()]
+    param (
+        [Parameter(Mandatory=$true,ValueFromPipeline=$true)][VMware.VimAutomation.ViCore.Types.V1.Inventory.VMHost]$VMHost
+
+    )
+
+    process {
+        $esxcli = Get-EsxCli -VMHost $VMHost.Name -V2
+        $shortName = $VMHost.Name.Split(".")[0]
+        $Site = $VMHost.Name.Split("-")[0].ToUpper()
+
+        #Delete old dumpfiles
+        $dumpfiles = $esxcli.system.coredump.file.list.invoke() | ?{$_.Path -like "*$shortName*"}
+        foreach($dumpfile in $dumpfiles) {
+            Write-Host "Removing $($dumpfile.Path)..." -NoNewline
+            
+            $dumpArgs = $esxcli.system.coredump.file.remove.CreateArgs()
+            $dumpArgs.file = $dumpfile.Path
+            $dumpArgs.force = $true
+            $result = $esxcli.system.coredump.file.remove.Invoke($dumpArgs)
+            switch($result) {
+                "true" { Write-Host "Success" -ForegroundColor Green }
+                default { Write-Host "Failed" -ForegroundColor Red }
+            }
+        }
+
+        #Create a new dumpfile
+        
+        $newArgs = $esxcli.system.coredump.file.add.CreateArgs()
+        $newArgs.datastore = "Template_ISO__$Site"
+        $newArgs.file = $shortName
+
+        Write-Host "Creating coredump on $($newArgs.datastore)..." -NoNewline
+        $result = $esxcli.system.coredump.file.add.Invoke($newArgs)
+        switch($result) {
+                "true" { Write-Host "Success" -ForegroundColor Green }
+                default { Write-Host "Failed" -ForegroundColor Red }
+        }
+
+        #Activate the new dumpfile
+        $newdumpfile = @($esxcli.system.coredump.file.list.invoke() | ?{$_.Path -like "*$shortName*"})
+        if($newdumpfile.count -eq 1) {
+            Write-Host "Setting $($newdumpfile.Path) as Active..." -NoNewline
+            $setArgs = $esxcli.system.coredump.file.set.CreateArgs()
+            $setArgs.path = $newdumpfile[0].Path
+            $result = $esxcli.system.coredump.file.set.Invoke($setArgs)
+            switch($result) {
+                "true" { Write-Host "Success" -ForegroundColor Green }
+                default { Write-Host "Failed" -ForegroundColor Red }
+            }
+        }
+
+    }
+
+}
+
+function Set-VMToolsPolicy {
+    [cmdletbinding()]
+    param (
+        $Servers
+    )
+
+    if($servers.Endswith(".txt")) {
+        $Servers = Get-Content $servers
+    } else {
+        $Servers = @("$Servers")
+    }
+
+    $vms = @()
+    foreach($_s in $servers) {
+        $vms += get-vm $_s
+    }
+
+    foreach($vm in $vms) { 
+        $spec = New-Object VMware.Vim.VirtualMachineConfigSpec
+        $spec.changeVersion = $vm.ExtensionData.Config.ChangeVersion
+        $spec.tools = New-Object VMware.Vim.ToolsConfigInfo
+        $spec.tools.toolsUpgradePolicy = "upgradeAtPowerCycle"
+ 
+        $_this = Get-View -Id $vm.Id
+        $_this.ReconfigVM_Task($spec)
     }
 }
