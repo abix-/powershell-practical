@@ -2,6 +2,12 @@
 
 ## 2026-10-22
 
+- Added official patch-artifact staging with Node SHA256/Authenticode and PyPI
+  wheel hashes; verifies portable fixed Node against the fifteen-host matrix
+  without installing runtimes. Added read-only OpenAI app package/update metadata
+  and official MSIX candidate inspection, keeping installed and detached-runtime
+  conclusions separate from candidate availability.
+
 - Added targeted Plex/PHP/runtime inventory, Python package metadata without
   executing Python, and public-host trust checks for installed curl clients and
   isolated Node bundled defaults. Includes fourteen incident chains and a valid

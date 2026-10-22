@@ -144,6 +144,24 @@ transport failures. Collection PASS does not mean security PASS; accepted incide
 chains are reported as findings. No credentials or response bodies are retained.
 Keep all reports outside public Git.
 
+`tools/Test-SecurityPatchArtifacts.ps1 -Directory <new-private-directory>` stages
+official Node26.12.1 x64 standalone/installer and pip26.2.2/certifi2026.10.19 wheels.
+Node downloads must match official SHA256 and valid OpenJS Authenticode; wheels
+must match official PyPI release hashes. The new portable Node must pass the valid
+control and reject all fourteen incident chains. Installers and Python are never
+executed. Existing runtime installations and processes remain unchanged.
+
+`tools/Test-CodexUpdateReadiness.ps1 -OutputPath <new-private-json-path>` records
+installed OpenAI Appx identity, executable metadata and read-only winget queries.
+Store version Unknown or an unmatched installed package is an explicit gap.
+`tools/Test-CodexUpdateCandidate.ps1 -Directory <new-private-directory>` downloads
+the latest x64 MSIX linked by official deployment documentation, reads its public
+manifest and extracts only Node executables after checking the package signature
+and expected OpenAI identity. Only independently valid OpenJS/OpenAI-signed Node
+candidates are tested. Pass `-PackagePath <already-downloaded-msix>` to inspect a
+saved package without another download. Neither tool installs or launches the app
+or proves detached runtime replacement.
+
 ## Why?
 This respository is a reference for the next person with a puzzle. I highly recommend searching GitHub for a PowerShell cmdlet then checking the Code results. Uncommented code examples are much better than no code examples.
 
