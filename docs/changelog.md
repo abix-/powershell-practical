@@ -2,6 +2,9 @@
 
 ## 2026-10-22
 
+- Extended router inventory with RouterBOOT versions and free storage/memory
+  for upgrade preparation, without retaining board serial numbers.
+
 - Added a read-only RouterOS inventory diagnostic and live acceptance script.
   Uses strict SSH host verification, retains allowlisted fields only, and
   records missing tables as unverified. Live router identity and required
