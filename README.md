@@ -162,6 +162,23 @@ candidates are tested. Pass `-PackagePath <already-downloaded-msix>` to inspect 
 saved package without another download. Neither tool installs or launches the app
 or proves detached runtime replacement.
 
+`tools/Test-VerifiedRuntimeUpdate.ps1 -Target Node|Python -ArtifactDirectory
+<verified-artifacts> -Directory <new-private-evidence>` installs the selected
+reviewed update and verifies a new installed client against the valid control and
+fourteen incident chains. Node rechecks MSI hash/signature, uses elevation and a
+new SYSTEM-readable copy of the public installer, and disables automatic reboots
+and Restart Manager shutdown. Python installs only pinned local wheels with
+configuration disabled, standard-library-first imports and no startup hooks.
+Receipts preserve prior versions, installer results and installed-client checks.
+Existing long-running clients must be relaunched separately by their owners.
+
+`tools/Test-DeferredCodexUpdate.ps1 -PackagePath <tested-msix> -OutputPath
+<new-private-receipt>` applies only the reviewed same-family package after owner
+checkpoints. It verifies the exact candidate hash/signature, disk space and package
+identity, then requests deferred registration with elevation for its packaged
+service. It never forces an app exit or restart. Selected detached runtime and
+next-launch tooling checks remain required even when package registration succeeds.
+
 ## Why?
 This respository is a reference for the next person with a puzzle. I highly recommend searching GitHub for a PowerShell cmdlet then checking the Code results. Uncommented code examples are much better than no code examples.
 

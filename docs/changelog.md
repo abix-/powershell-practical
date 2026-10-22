@@ -2,6 +2,12 @@
 
 ## 2026-10-22
 
+- Added reviewed offline Node/Python installation with pinned artifact checks,
+  private before/after evidence and installed-client TLS acceptance. MSI operations
+  disable reboot/Restart Manager shutdown; Python skips startup hooks and preserves
+  standard-library import precedence. Added signed same-family Codex deferred
+  registration after checkpoints, without forced exits or runtime file replacement.
+
 - Added official patch-artifact staging with Node SHA256/Authenticode and PyPI
   wheel hashes; verifies portable fixed Node against the fifteen-host matrix
   without installing runtimes. Added read-only OpenAI app package/update metadata

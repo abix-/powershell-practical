@@ -24,6 +24,16 @@ try {
     $packages = @(Get-AppxPackage -Name '*OpenAI*' -ErrorAction Stop |
         Select-Object Name, Version, PackageFullName, PackageFamilyName, InstallLocation, Status, SignatureKind)
     $observations.app_packages = @{ status = 'observed'; data = $packages }
+    $observations.packaged_node = @(foreach ($package in $packages) {
+        if ($package.Name -ne 'OpenAI.Codex') { continue }
+        $nodePath = Join-Path $package.InstallLocation 'app/resources/cua_node/bin/node.exe'
+        if (Test-Path -LiteralPath $nodePath -PathType Leaf) {
+            $file = Get-Item -LiteralPath $nodePath
+            @{ package_version = [string]$package.Version; path = $file.FullName; version = $file.VersionInfo.FileVersion
+                sha256 = (Get-FileHash -LiteralPath $nodePath -Algorithm SHA256).Hash
+                scope = 'Packaged file metadata only; does not prove executable access or active detached runtime selection.' }
+        }
+    })
 } catch { $observations.app_packages = @{ status = 'unverified'; error_id = $_.FullyQualifiedErrorId } }
 $observations.running_executables = @(Get-Process | Where-Object { $_.ProcessName -match '^(codex|chatgpt)$' -and $_.Path } |
     ForEach-Object { $file = Get-Item -LiteralPath $_.Path
