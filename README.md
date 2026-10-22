@@ -35,7 +35,8 @@ The identity file is passed to SSH; the scripts never read its contents.
 
 Discovery includes DHCP, ARP, IPv6 neighbors, bridge hosts, both wireless
 menus, installed packages and selected service/firewall fields. RouterBOOT
-versions and free storage/memory support upgrade preparation. Returned
+versions and free storage/memory support upgrade preparation. Updater status
+includes the installed version and any cached download status. Returned
 records are filtered locally to the allowlist before saving. Keep the JSON
 outside public Git. Missing tables remain unverified; stale addresses and
 randomized MACs do not prove a distinct or currently online device. This

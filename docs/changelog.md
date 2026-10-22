@@ -2,6 +2,10 @@
 
 ## 2026-10-22
 
+- Added read-only updater status to distinguish downloads from an installed
+  upgrade. Verified installed RouterOS and package versions after the
+  operator's update; RouterBOOT is checked separately.
+
 - Extended router inventory with RouterBOOT versions and free storage/memory
   for upgrade preparation, without retaining board serial numbers.
 

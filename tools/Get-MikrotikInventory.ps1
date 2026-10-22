@@ -38,6 +38,7 @@ if ($RouterAddress -notmatch '^[a-zA-Z0-9.:_-]+$' -or $Username -notmatch '^[a-z
 $queries = [ordered]@{
     resource = '/system/resource/print as-value'
     routerboard = '/system/routerboard/print as-value'
+    update_status = '/system/package/update/print as-value'
     packages = '/system/package/print as-value proplist=name,version,disabled'
     leases = '/ip/dhcp-server/lease/print as-value proplist=address,mac-address,host-name,status,last-seen,active-address,active-mac-address,server'
     arp = '/ip/arp/print as-value proplist=address,mac-address,interface,status,complete,invalid'
@@ -84,6 +85,8 @@ foreach ($entry in $queries.GetEnumerator()) {
                 @('version', 'board-name', 'architecture-name', 'free-hdd-space', 'total-hdd-space', 'free-memory', 'total-memory')
             } elseif ($entry.Key -eq 'routerboard') {
                 @('model', 'firmware-type', 'factory-firmware', 'current-firmware', 'upgrade-firmware')
+            } elseif ($entry.Key -eq 'update_status') {
+                @('channel', 'installed-version', 'latest-version', 'status')
             } else {
                 ($entry.Value -split 'proplist=', 2)[1] -split ','
             }
