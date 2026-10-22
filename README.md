@@ -115,6 +115,35 @@ Debug/test rules are outside this plan. Review against fresh live state and
 verify actual loopback MCP plus paired-phone sync/discovery before accepting
 any later change. The plan itself does not establish network acceptance.
 
+## Application and runtime security evidence
+
+`tools/Test-ApplicationSecurityInventory.ps1 -OutputPath <new-private-json-path>`
+collects targeted Plex/PHP and runtime metadata. It checks Windows installation,
+process and service metadata, Node executable ancestry, known binary versions/hashes, installed Python312
+package Name/Version headers, Docker container names/images/ports and already
+running Ubuntu package/k3s image metadata. Python is never executed. Plex public
+identity requests check only localhost and the known NAS, retaining version only.
+Stopped WSL distributions are not started. Unreachable services, missing tools
+and unchecked installation locations remain explicit inventory gaps.
+
+`tools/Test-CurlTrustEvidence.ps1 -OutputPath <new-private-json-path>` tests
+installed Windows/Git curl binaries against one valid control and fourteen
+[incident hosts](https://emudhra.we-have-a-problem.com/), including two No CT
+chains. Curl configuration is disabled; platform trust updates and inherited
+environment are not controlled. This does not establish Git transport settings.
+
+`tools/Test-NodeTrustEvidence.ps1 -OutputPath <new-private-json-path>` uses the
+installed Node binary with bundled CAs and child-only preload/trust overrides
+removed without reading their values. The same fifteen public HTTPS HEAD checks
+use only built-in modules. This measures isolated bundled defaults, not existing
+application configuration. Pass `-NodePath <existing-node.exe>` to check another
+installed copy. No runtime installation or running app is changed.
+
+These tests preserve evidence and distinguish certificate rejection from unknown
+transport failures. Collection PASS does not mean security PASS; accepted incident
+chains are reported as findings. No credentials or response bodies are retained.
+Keep all reports outside public Git.
+
 ## Why?
 This respository is a reference for the next person with a puzzle. I highly recommend searching GitHub for a PowerShell cmdlet then checking the Code results. Uncommented code examples are much better than no code examples.
 

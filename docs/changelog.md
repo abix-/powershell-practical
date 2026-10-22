@@ -2,6 +2,12 @@
 
 ## 2026-10-22
 
+- Added targeted Plex/PHP/runtime inventory, Python package metadata without
+  executing Python, and public-host trust checks for installed curl clients and
+  isolated Node bundled defaults. Includes fourteen incident chains and a valid
+  control, explicit unknown results and private evidence with hashes. No runtime
+  installation, trust-store change or stopped-WSL startup.
+
 - Added read-only Windows update readiness: build, public ESU license status,
   services/policy, disk space, restart indicators, history and offered/hidden
   update searches. No update installation, activation or reboot operations.
