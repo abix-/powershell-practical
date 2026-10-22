@@ -2,6 +2,13 @@
 
 ## 2026-10-22
 
+- Added read-only Windows update readiness: build, public ESU license status,
+  services/policy, disk space, restart indicators, history and offered/hidden
+  update searches. No update installation, activation or reboot operations.
+- Added exact OneLog release firewall rule/filter backup and a data-only
+  restriction proposal with inverse parameters. Captures adapted NetSecurity
+  aliases and excludes debug/test rules; no firewall writes are invoked.
+
 - Added read-only event-log coverage evidence for historical investigations:
   live retention bounds, standard EVTX archives and existing shadow copies.
   Missing history remains an explicit gap instead of a clean result.

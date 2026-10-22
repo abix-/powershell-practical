@@ -96,6 +96,25 @@ retention or creates snapshots. An empty standard archive directory does not
 exclude exports elsewhere. A log starting before the requested window does not
 prove continuous auditing; archive discovery does not count as event review.
 
+`tools/Test-WindowsUpdateReadiness.ps1 -OutputPath <new-private-json-path>`
+reads OS/build, public ESU volume-license status (never product keys), service
+and policy metadata, free system-disk space, restart indicators and update
+history. It searches the configured update service for offered and hidden
+software updates; this can refresh the Windows Update search cache. It never
+downloads/installs updates, accepts EULAs, activates licenses or reboots.
+An empty offer list does not establish patch compliance or consumer ESU status.
+
+`tools/Test-OnelogFirewallPlan.ps1 -EvidencePath <private-security-report>`
+`-ProgramPath <exact-release-executable> -OutputPath <new-private-plan>`
+reads the two exact release-program rules from PersistentStore and captures
+all seven associated filter types, including NetSecurity's adapted aliases.
+It produces data-only parameter sets for narrowing LocalPort/RemoteAddress,
+plus exact inverse parameter sets; it invokes no writing cmdlets. Profiles,
+program identity, enabled state and all other conditions remain unchanged.
+Debug/test rules are outside this plan. Review against fresh live state and
+verify actual loopback MCP plus paired-phone sync/discovery before accepting
+any later change. The plan itself does not establish network acceptance.
+
 ## Why?
 This respository is a reference for the next person with a puzzle. I highly recommend searching GitHub for a PowerShell cmdlet then checking the Code results. Uncommented code examples are much better than no code examples.
 
