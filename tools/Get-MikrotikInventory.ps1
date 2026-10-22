@@ -13,6 +13,8 @@ An existing read-only SSH account.
 Existing SSH identity path, passed directly to SSH without reading its contents.
 .PARAMETER OutputPath
 Local JSON evidence file. Keep private network inventory outside public Git.
+.PARAMETER SecurityEvidence
+Also collects account logs and selected account/persistence metadata.
 .EXAMPLE
 ./Get-MikrotikInventory.ps1 -RouterAddress 192.168.88.1 -Username inventory -IdentityFile C:/keys/router_readonly -OutputPath C:/Windows/Temp/mikrotik-inventory.json
 .NOTES
@@ -23,10 +25,14 @@ param (
     [Parameter(Mandatory)] [string]$RouterAddress,
     [Parameter(Mandatory)] [string]$Username,
     [Parameter(Mandatory)] [string]$IdentityFile,
-    [Parameter(Mandatory)] [string]$OutputPath
+    [Parameter(Mandatory)] [string]$OutputPath,
+    [switch]$SecurityEvidence
 )
 
 $ErrorActionPreference = 'Stop'
+if ($SecurityEvidence -and (Test-Path -LiteralPath $OutputPath)) {
+    throw 'Choose a new security evidence path; previous evidence is preserved.'
+}
 $sshCommand = Get-Command ssh.exe -ErrorAction SilentlyContinue
 $sshPath = if ($sshCommand) { $sshCommand.Source } else { 'C:/Program Files/Git/usr/bin/ssh.exe' }
 if (-not (Test-Path -LiteralPath $sshPath -PathType Leaf)) { throw 'OpenSSH was not found.' }
@@ -55,6 +61,51 @@ $queries = [ordered]@{
     ipv6_firewall = '/ipv6/firewall/filter/print as-value proplist=chain,action,disabled,protocol,dst-port,src-port,src-address,dst-address,in-interface,in-interface-list,src-address-list,dst-address-list,connection-state,ipsec-policy'
 }
 
+$securityQueries = [ordered]@{}
+if ($SecurityEvidence) {
+    # Explicit get calls avoid retrieving script bodies, event actions or secrets.
+    $securityTables = [ordered]@{
+        account_logs = @{ menu = '/log'; fields = @('time', 'topics', 'message'); filter = ' where topics~"account" or message~"login failure"' }
+        device_mode = @{ menu = '/system/device-mode'; fields = @('mode', 'flagged', 'flagging-enabled'); single = $true }
+        router_clock = @{ menu = '/system/clock'; fields = @('date', 'time', 'time-zone-name', 'gmt-offset'); single = $true }
+        users = @{ menu = '/user'; fields = @('name', 'group', 'disabled', 'address', 'last-logged-in') }
+        groups = @{ menu = '/user/group'; fields = @('name', 'policy') }
+        active_users = @{ menu = '/user/active'; fields = @('name', 'address', 'via', 'when') }
+        scripts = @{ menu = '/system/script'; fields = @('name', 'owner', 'policy', 'last-started', 'run-count') }
+        scheduler = @{ menu = '/system/scheduler'; fields = @('name', 'owner', 'disabled', 'start-date', 'start-time', 'interval', 'next-run', 'run-count', 'policy') }
+        netwatch = @{ menu = '/tool/netwatch'; fields = @('host', 'type', 'disabled', 'status') }
+        dns = @{ menu = '/ip/dns'; fields = @('servers', 'dynamic-servers', 'allow-remote-requests'); single = $true }
+        socks = @{ menu = '/ip/socks'; fields = @('enabled', 'port'); single = $true }
+        proxy = @{ menu = '/ip/proxy'; fields = @('enabled', 'port'); single = $true }
+        containers = @{ menu = '/container'; fields = @('name', 'status', 'interface', 'root-dir') }
+        certificates = @{ menu = '/certificate'; fields = @('name', 'common-name', 'issuer', 'fingerprint', 'trusted') }
+        dns_static = @{ menu = '/ip/dns/static'; fields = @('name', 'type', 'address', 'disabled') }
+        logging = @{ menu = '/system/logging'; fields = @('topics', 'action', 'disabled') }
+        log_actions = @{ menu = '/system/logging/action'; fields = @('name', 'target', 'memory-lines', 'disk-file-name', 'remote') }
+    }
+    foreach ($entry in $securityTables.GetEnumerator()) {
+        $table = $entry.Value
+        $pairs = foreach ($field in $table.fields) {
+            $selector = if ($table.single) { '' } else { '$id ' }
+            '"' + $field + '"=[' + $table.menu + '/get ' + $selector + $field + ']'
+        }
+        $record = '{' + ($pairs -join ';') + '}'
+        $command = if ($table.single) {
+            ':put [:serialize to=json options=json.no-string-conversion ' + $record + ']'
+        } else {
+            ':local out "["; :local sep ""; :foreach id in=[' + $table.menu + '/find' + $table.filter + '] do={ :set out ($out . $sep . [:serialize to=json options=json.no-string-conversion ' + $record + ']); :set sep "," }; :put ($out . "]")'
+        }
+        $securityQueries[$entry.Key] = $command
+    }
+    # Capture the bounded memory account log before the inventory SSH logins.
+    $combined = [ordered]@{ account_logs = $securityQueries.account_logs }
+    foreach ($entry in $queries.GetEnumerator()) { $combined[$entry.Key] = $entry.Value }
+    foreach ($entry in $securityQueries.GetEnumerator()) {
+        if ($entry.Key -ne 'account_logs') { $combined[$entry.Key] = $entry.Value }
+    }
+    $queries = $combined
+}
+
 $results = [ordered]@{}
 foreach ($entry in $queries.GetEnumerator()) {
     $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
@@ -63,6 +114,7 @@ foreach ($entry in $queries.GetEnumerator()) {
     $startInfo.RedirectStandardOutput = $true
     $startInfo.RedirectStandardError = $true
     $remoteCommand = ':put [:serialize to=json options=json.no-string-conversion [' + $entry.Value + ']]'
+    if ($securityQueries.Contains($entry.Key)) { $remoteCommand = $entry.Value }
     foreach ($argument in @('-T', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'IdentitiesOnly=yes', '-o', 'ConnectTimeout=10', '-o', 'ConnectionAttempts=1', '-i', $IdentityFile, "$Username@$RouterAddress", $remoteCommand)) {
         $startInfo.ArgumentList.Add($argument)
     }
@@ -81,8 +133,10 @@ foreach ($entry in $queries.GetEnumerator()) {
         if ($process.ExitCode -ne 0) { throw "SSH failed collecting $($entry.Key): $stderr" }
         try {
             $data = ConvertFrom-Json -InputObject $stdout -AsHashtable -ErrorAction Stop
-            $fields = if ($entry.Key -eq 'resource') {
-                @('version', 'board-name', 'architecture-name', 'free-hdd-space', 'total-hdd-space', 'free-memory', 'total-memory')
+            $fields = if ($securityQueries.Contains($entry.Key)) {
+                $securityTables[$entry.Key].fields
+            } elseif ($entry.Key -eq 'resource') {
+                @('version', 'board-name', 'architecture-name', 'uptime', 'free-hdd-space', 'total-hdd-space', 'free-memory', 'total-memory')
             } elseif ($entry.Key -eq 'routerboard') {
                 @('model', 'firmware-type', 'factory-firmware', 'current-firmware', 'upgrade-firmware')
             } elseif ($entry.Key -eq 'update_status') {

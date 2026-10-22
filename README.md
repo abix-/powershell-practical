@@ -42,6 +42,47 @@ outside public Git. Missing tables remain unverified; stale addresses and
 randomized MACs do not prove a distinct or currently online device. This
 checks discovery evidence, not firmware remediation or external reachability.
 
+Add `-SecurityEvidence` to preserve account logs, device-mode flags, account
+metadata, script/scheduler names and selected DNS/proxy/logging settings.
+These queries use explicit field reads on the router and never retrieve
+script bodies, event actions, configuration exports or credentials. Security
+evidence requires a new output path. RAM logs can be lost on reboot; an unset
+compromise flag cannot establish that a router has never been compromised.
+
+## Windows security evidence
+
+`tools/Test-WindowsSecurityEvidence.ps1 -OutputPath <new-private-json-path>`
+invokes the permanent read-only desktop collector and checks saved evidence
+identity and SHA256. Requires Windows and PowerShell 7.5+. Run in an elevated
+terminal when Security-log access is needed; the script never elevates itself.
+Add `-RequireSecurityLog` to fail if Security-log or inbound-rule access is
+still missing, while retaining the report for review.
+
+Collects up to 2,000 selected structured events per log over 30 days (override
+with `-Days`), retention bounds, Defender state, local accounts, persistence
+metadata, installed app versions, processes, TCP endpoints and firewall state.
+Task executable paths are read without arguments or running tasks. Enabled
+inbound allow rules include application, port and address restrictions.
+Running accessible executables receive hashes and Authenticode status; project
+executables also retain PID/start time and file metadata. OneLog log files are
+listed by metadata only. Command lines, event messages, task actions, script
+bodies, browser profiles and credential files are excluded. Missing access,
+disabled histories and collection caps limit the investigation. Empty threat
+history, familiar names and valid signatures do not establish absence of
+compromise. The collector makes no remediation changes and never overwrites
+an existing evidence file. Keep reports outside public Git.
+
+`tools/Test-WindowsTrustEvidence.ps1 -OutputPath <new-private-json-path>`
+reads public Root/CA/Disallowed metadata and checks all certificates from the
+[eMudhra incident manifest](https://emudhra.we-have-a-problem.com/).
+It validates public certificate hashes, supplies issuer certificates as
+untrusted chain material and uses the existing Windows chain engine with
+revocation fetching and AIA downloads disabled. Automatic Windows CTL activity
+is not controlled. No certificates are imported and no private keys are read.
+Explicit distrust is distinct from rejection for an incomplete chain; an empty
+Disallowed store enumeration does not prove that Microsoft's CTL blocks are
+absent. This check does not replace testing the application's actual TLS path.
+
 ## Why?
 This respository is a reference for the next person with a puzzle. I highly recommend searching GitHub for a PowerShell cmdlet then checking the Code results. Uncommented code examples are much better than no code examples.
 
