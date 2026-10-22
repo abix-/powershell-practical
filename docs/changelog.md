@@ -2,6 +2,10 @@
 
 ## 2026-10-22
 
+- Added read-only event-log coverage evidence for historical investigations:
+  live retention bounds, standard EVTX archives and existing shadow copies.
+  Missing history remains an explicit gap instead of a clean result.
+
 - Separated Windows account/audit changes, authentication failures and remote
   logins into independent bounded queries. Added selected time bounds, package
   and service firewall conditions, and a focused elevated collection mode.

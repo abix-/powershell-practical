@@ -89,6 +89,13 @@ Explicit distrust is distinct from rejection for an incomplete chain; an empty
 Disallowed store enumeration does not prove that Microsoft's CTL blocks are
 absent. This check does not replace testing the application's actual TLS path.
 
+`tools/Test-WindowsLogCoverage.ps1 -OutputPath <new-private-json-path> -Days 30`
+collects live event-log retention bounds and settings, standard archived EVTX
+file metadata/hashes and available shadow-copy metadata. It never changes log
+retention or creates snapshots. An empty standard archive directory does not
+exclude exports elsewhere. A log starting before the requested window does not
+prove continuous auditing; archive discovery does not count as event review.
+
 ## Why?
 This respository is a reference for the next person with a puzzle. I highly recommend searching GitHub for a PowerShell cmdlet then checking the Code results. Uncommented code examples are much better than no code examples.
 
