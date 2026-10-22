@@ -25,6 +25,21 @@ The 146 functions increase efficiency, minimize mundane, and create reports. Mos
 ## Random Scripts
 The random scripts were written before I learned about Modules. I haven't needed them in a few years and the ones I still use have been copied into the Aluminium module.
 
+## RouterOS inventory
+
+`tools/Test-MikrotikInventory.ps1` invokes the permanent read-only diagnostic
+and checks the saved router identity and core discovery tables. It requires
+PowerShell 7.5+, OpenSSH, an existing trusted host key and a read-only SSH
+account. Pass `-RouterAddress`, `-Username`, `-IdentityFile` and `-OutputPath`.
+The identity file is passed to SSH; the scripts never read its contents.
+
+Discovery includes DHCP, ARP, IPv6 neighbors, bridge hosts, both wireless
+menus, installed packages and selected service/firewall fields. Returned
+records are filtered locally to the allowlist before saving. Keep the JSON
+outside public Git. Missing tables remain unverified; stale addresses and
+randomized MACs do not prove a distinct or currently online device. This
+checks discovery evidence, not firmware remediation or external reachability.
+
 ## Why?
 This respository is a reference for the next person with a puzzle. I highly recommend searching GitHub for a PowerShell cmdlet then checking the Code results. Uncommented code examples are much better than no code examples.
 
