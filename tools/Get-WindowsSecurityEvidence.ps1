@@ -8,7 +8,9 @@ Unavailable sections remain unverified. This is triage, not a clean bill of heal
 .PARAMETER OutputPath
 Private evidence file outside public Git. Existing files are never overwritten.
 .PARAMETER Days
-Requested event lookback, limited by log retention and a per-log event cap.
+Requested event lookback, limited by log retention and a per-query event cap.
+.PARAMETER AuthenticationAndFirewallOnly
+Collect events, OS identity and firewall exposure without repeating executable hashing.
 .EXAMPLE
 ./Get-WindowsSecurityEvidence.ps1 -OutputPath C:/Windows/Temp/desktop-security.json
 .NOTES
@@ -17,7 +19,8 @@ Requires Windows and PowerShell 7.5+. Some observations require administrator ac
 [CmdletBinding()]
 param (
     [Parameter(Mandatory)] [string]$OutputPath,
-    [ValidateRange(1, 90)] [int]$Days = 30
+    [ValidateRange(1, 90)] [int]$Days = 30,
+    [switch]$AuthenticationAndFirewallOnly
 )
 $ErrorActionPreference = 'Stop'
 if (-not $IsWindows) { throw 'Windows is required.' }
@@ -28,6 +31,9 @@ $observations = [ordered]@{}
 
 function Save-Observation {
     param ([string]$Name, [scriptblock]$Collect)
+    if ($AuthenticationAndFirewallOnly -and $Name -notin @('security_events', 'security_changes',
+        'security_failures', 'security_remote_logons', 'defender_events', 'service_events',
+        'task_events', 'rdp_events', 'os', 'firewall', 'firewall_inbound_allow_rules', 'network_profiles')) { return }
     $started = [DateTime]::UtcNow.ToString('o')
     try {
         $data = @(& $Collect)
@@ -45,9 +51,13 @@ function Save-Observation {
 $eventFields = @('TargetUserName', 'TargetDomainName', 'SubjectUserName', 'SubjectDomainName',
     'IpAddress', 'IpPort', 'LogonType', 'AuthenticationPackageName', 'Status', 'SubStatus',
     'MemberName', 'MemberSid', 'TaskName', 'UserName', 'ServiceName', 'ServiceType',
-    'StartType', 'AccountName', 'Threat Name', 'Detection User', 'Action Name')
+    'StartType', 'AccountName', 'Threat Name', 'Detection User', 'Action Name',
+    'CategoryId', 'SubcategoryId', 'SubcategoryGuid', 'AuditPolicyChanges', 'Workstation', 'PackageName')
 $eventQueries = [ordered]@{
     security_events = @{ LogName = 'Security'; Id = @(1102, 4719, 4720, 4722, 4726, 4732, 4624, 4625, 4648, 4672) }
+    security_changes = @{ LogName = 'Security'; Id = @(1102, 4719, 4720, 4722, 4726, 4732, 4733, 4738, 4698, 4699, 4702) }
+    security_failures = @{ LogName = 'Security'; Id = @(4625, 4771, 4776) }
+    security_remote_logons = @{ LogName = 'Security'; Id = 4624; LogonType = @('3', '8', '10') }
     defender_events = @{ LogName = 'Microsoft-Windows-Windows Defender/Operational'; Id = @(1116, 1117, 1118, 1119, 5001, 5007) }
     service_events = @{ LogName = 'System'; Id = @(104, 7045) }
     task_events = @{ LogName = 'Microsoft-Windows-TaskScheduler/Operational'; Id = @(106, 140, 141) }
@@ -70,6 +80,11 @@ foreach ($entry in $eventQueries.GetEnumerator()) {
             foreach ($datum in $xml.Event.EventData.Data) {
                 if ($datum.Name -in $eventFields) { $fields[$datum.Name] = [string]$datum.'#text' }
             }
+            if ($event.Id -eq 1102) {
+                foreach ($field in @('SubjectUserName', 'SubjectDomainName')) {
+                    $fields[$field] = [string]$xml.Event.UserData.LogFileCleared.$field
+                }
+            }
             [pscustomobject]@{
                 time_utc = $event.TimeCreated.ToUniversalTime().ToString('o')
                 id = $event.Id; record_id = $event.RecordId; fields = $fields
@@ -79,6 +94,8 @@ foreach ($entry in $eventQueries.GetEnumerator()) {
             log_name = $query.LogName; enabled = $log.IsEnabled; total_records = $log.RecordCount
             oldest_available_utc = if ($oldest) { $oldest.TimeCreated.ToUniversalTime().ToString('o') } else { $null }
             requested_start_utc = $query.StartTime.ToUniversalTime().ToString('o')
+            newest_selected_utc = if ($events.Count) { $events[0].TimeCreated.ToUniversalTime().ToString('o') } else { $null }
+            oldest_selected_utc = if ($events.Count) { $events[-1].TimeCreated.ToUniversalTime().ToString('o') } else { $null }
             cap = 2000; possibly_truncated = ($events.Count -eq 2000); events = @($rows)
         }
     }
@@ -239,14 +256,19 @@ Save-Observation 'tcp' {
 Save-Observation 'firewall' {
     Get-NetFirewallProfile | Select-Object Name, Enabled, DefaultInboundAction, DefaultOutboundAction
 }
+Save-Observation 'network_profiles' {
+    Get-NetConnectionProfile | Select-Object InterfaceAlias, NetworkCategory, IPv4Connectivity, IPv6Connectivity
+}
 Save-Observation 'firewall_inbound_allow_rules' {
     foreach ($rule in (Get-NetFirewallRule -Enabled True -Direction Inbound -Action Allow)) {
         $application = $rule | Get-NetFirewallApplicationFilter
+        $service = $rule | Get-NetFirewallServiceFilter
         $ports = $rule | Get-NetFirewallPortFilter
         $addresses = $rule | Get-NetFirewallAddressFilter
         [pscustomobject]@{
             name = $rule.Name; display_name = $rule.DisplayName; profile = [string]$rule.Profile
-            program = $application.Program; protocol = [string]$ports.Protocol
+            program = $application.Program; package = $application.Package; service = $service.Service
+            protocol = [string]$ports.Protocol
             local_ports = $ports.LocalPort; remote_ports = $ports.RemotePort
             local_addresses = $addresses.LocalAddress; remote_addresses = $addresses.RemoteAddress
         }
@@ -275,6 +297,7 @@ Save-Observation 'installed_apps' {
 $report = [ordered]@{
     started_at = $startedAt; completed_at = [DateTime]::UtcNow.ToString('o')
     timezone = (Get-TimeZone).Id
+    collection_mode = if ($AuthenticationAndFirewallOnly) { 'authentication and firewall only' } else { 'full triage' }
     scope = 'Read-only triage metadata. Event retention, permissions and collection caps limit coverage. No absence-of-compromise claim.'
     observations = $observations
 }

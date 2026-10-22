@@ -58,11 +58,17 @@ terminal when Security-log access is needed; the script never elevates itself.
 Add `-RequireSecurityLog` to fail if Security-log or inbound-rule access is
 still missing, while retaining the report for review.
 
-Collects up to 2,000 selected structured events per log over 30 days (override
+Collects up to 2,000 selected structured events per query over 30 days (override
 with `-Days`), retention bounds, Defender state, local accounts, persistence
 metadata, installed app versions, processes, TCP endpoints and firewall state.
 Task executable paths are read without arguments or running tasks. Enabled
-inbound allow rules include application, port and address restrictions.
+inbound allow rules include application/package, service, port and address
+restrictions. Separate account/policy changes, authentication failures and
+remote logins keep noisy service events from burying these categories. Every
+query retains its oldest/newest selected times and possible truncation flag.
+`-AuthenticationAndFirewallOnly` collects this evidence without repeating
+executable hashing. Keep an elevated report in a private folder readable by
+the investigating user; Windows Temp files can otherwise restrict later reads.
 Running accessible executables receive hashes and Authenticode status; project
 executables also retain PID/start time and file metadata. OneLog log files are
 listed by metadata only. Command lines, event messages, task actions, script

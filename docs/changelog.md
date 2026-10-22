@@ -2,6 +2,10 @@
 
 ## 2026-10-22
 
+- Separated Windows account/audit changes, authentication failures and remote
+  logins into independent bounded queries. Added selected time bounds, package
+  and service firewall conditions, and a focused elevated collection mode.
+
 - Added Windows trust evidence using public certificate metadata and all
   eMudhra intermediate/cross-sign chain decisions without importing certificates
   or reading private keys. Preserves explicit distrust separately from other
