@@ -5,6 +5,8 @@
 - Added read-only desktop performance evidence with interval CPU rankings,
   memory pressure, paging, disk latency and health, GPU counters, and selected
   system events. Excludes command lines, credentials and window contents.
+- Included the complete process private-memory breakdown and Windows kernel
+  pool counters to distinguish application allocations from system commit.
 
 ## 2026-10-22
 

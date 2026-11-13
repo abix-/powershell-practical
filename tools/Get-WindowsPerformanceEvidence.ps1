@@ -37,6 +37,8 @@ $paths = @(
     '\Memory\Available MBytes',
     '\Memory\Committed Bytes',
     '\Memory\Commit Limit',
+    '\Memory\Pool Paged Bytes',
+    '\Memory\Pool Nonpaged Bytes',
     '\Memory\Pages Input/sec',
     '\Memory\Page Reads/sec',
     '\PhysicalDisk(*)\Avg. Disk sec/Transfer',
@@ -101,6 +103,11 @@ $powerScheme = @(& powercfg.exe /getactivescheme)
     PowerScheme = $powerScheme; Counters = @($counters)
     TopCpu = @($processes | Sort-Object CpuPercent -Descending | Select-Object -First 15)
     TopPrivateMemory = @($processes | Sort-Object PrivateMiB -Descending | Select-Object -First 12)
+    TotalProcessPrivateMiB = [Math]::Round(($processes | Measure-Object PrivateMiB -Sum).Sum, 1)
+    MemoryGroups = @($processes | Group-Object Name | ForEach-Object {
+        [pscustomobject]@{ Name = $_.Name; Count = $_.Count
+            PrivateMiB = [Math]::Round(($_.Group | Measure-Object PrivateMiB -Sum).Sum, 1) }
+    } | Sort-Object PrivateMiB -Descending)
     ProcessGroups = @($processes | Group-Object Name | ForEach-Object {
         [pscustomobject]@{ Name = $_.Name; Count = $_.Count
             CpuPercent = [Math]::Round(($_.Group | Measure-Object CpuPercent -Sum).Sum, 2)
