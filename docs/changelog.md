@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-11-13
+
+- Added read-only desktop performance evidence with interval CPU rankings,
+  memory pressure, paging, disk latency and health, GPU counters, and selected
+  system events. Excludes command lines, credentials and window contents.
+
 ## 2026-10-22
 
 - Added reviewed offline Node/Python installation with pinned artifact checks,
