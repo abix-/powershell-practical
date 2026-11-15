@@ -55,6 +55,7 @@ for (const name of [
     'setRobloxSubgameDetectionConfig',
     'getExecutableFingerprintForProcess',
     'startGameEvents',
+    'getDiscordClipsCumulativeCpuUsage',
 ]) {
     if (typeof nativeUtils[name] === 'function') {
         nativeUtils[name] = () => undefined;
@@ -79,24 +80,34 @@ function Set-ObserverPatch {
     $files = @(Get-ChildItem -Path (Join-Path $Root 'app-*\modules\discord_utils-*\discord_utils\index.js') -ErrorAction SilentlyContinue)
     foreach ($file in $files) {
         $text = [System.IO.File]::ReadAllText($file.FullName)
+        $original = "$($file.FullName).orig"
+        $newline = if ($text.Contains("`r`n")) { "`r`n" } else { "`n" }
+        $block = $newline + ($patch -replace "`r?`n", $newline)
+        $stale = $text.Contains($marker) -and -not $text.Contains($block)
+        if ($stale -and (Test-Path -LiteralPath $original)) {
+            # An older patch is in place: start again from the saved original.
+            $text = [System.IO.File]::ReadAllText($original)
+        }
         $status = if ($text.Contains($marker)) {
-            'already patched'
+            if ($stale) {
+                Write-PatchLog "older patch and no original, not updated: $($file.FullName)"
+                'stale, no original'
+            }
+            else { 'already patched' }
         }
         elseif (-not $text.Contains($anchor)) {
             Write-PatchLog "anchor line missing, not patched: $($file.FullName)"
             'anchor missing'
         }
         else {
-            $original = "$($file.FullName).orig"
             if (-not (Test-Path -LiteralPath $original)) {
                 Copy-Item -LiteralPath $file.FullName -Destination $original
             }
-            $newline = if ($text.Contains("`r`n")) { "`r`n" } else { "`n" }
             $index = $text.IndexOf($anchor) + $anchor.Length
-            $block = $newline + ($patch -replace "`r?`n", $newline)
             [System.IO.File]::WriteAllText($file.FullName, $text.Insert($index, $block))
-            Write-PatchLog "patched: $($file.FullName)"
-            'patched'
+            $verb = if ($stale) { 'updated' } else { 'patched' }
+            Write-PatchLog "$($verb): $($file.FullName)"
+            $verb
         }
         [pscustomobject][ordered]@{ Status = $status; Path = $file.FullName }
     }
